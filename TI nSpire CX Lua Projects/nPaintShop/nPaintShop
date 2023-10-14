@@ -1,0 +1,4226 @@
+----------------------
+-- nPaintShop 1.0   --
+--     by           --
+--  J. Beaman       --
+--   © 2022         --
+--                  --
+-- Reguires GTK 1.0 --
+--   © 2021-2022    --
+----------------------
+function loadLibrary(libraryName)  
+  -- libraryName is a string.  To refer to a 
+  -- library from GTKLib, the string starts
+  -- with "GTKLib\\".  (i.e. "GTKLib\\GTK_Base")
+  local lualib
+  
+  -- load library source code
+  lualib =  var.recall(libraryName)
+
+  if not lualib then
+    print("Library " .. libraryName .. " failed to load")
+    return 
+  end
+
+  -- compile library  -- first pass
+  lualib, err = loadstring(lualib)
+  if err then
+    error(err)
+  end
+
+  if not lualib then
+    print("Library " .. libraryName .. " failed to compile")
+    return
+  end
+
+  -- Run library   -- second pass 
+  lualib()
+end
+
+-- Load GTK 1.0
+loadLibrary("GTKLib\\GTK_Base")
+
+-- GTK View and Views
+local gtk             = gtk
+local View            = gtk.View
+local ConfirmationBox = gtk.Views.ConfirmationBox
+local Dialog          = gtk.Views.Dialog
+local ListBox         = gtk.Views.ListBox
+local MessageBox      = gtk.Views.MessageBox
+
+local mathTools       = gtk.mathTools
+local deepcopy        = gtk.tools.deepcopy
+
+-- GTK Widgets
+local Button    = gtk.Widgets.Button
+local Checkbox  = gtk.Widgets.Checkbox
+local Dropdown  = gtk.Widgets.Dropdown
+local Input     = gtk.Widgets.Input
+local Label     = gtk.Widgets.Label
+local List      = gtk.Widgets.List
+
+-- Primary nPaintShop objects/tables:
+local Images    = {} -- Image object container
+local File      = {} -- File (TI Var) I/O and management
+local ToolBox   = {} -- Defines each tool, keeps track of current tool and its progress/status
+local Filters   = {} -- Collection of image filters
+local Pallets   = {} -- Color pallet object
+
+local Workspace = View() -- Work area View
+
+local menu = {
+  {"File",
+    {"New  (Shift+N)",        function() Workspace:charIn("N") end},
+    {"Open (Shift+O)",        function() Workspace:charIn("O") end},
+    {"Save (Shift+S)",        function() Workspace:charIn("S") end},
+    {"Save As...",            function() File:saveAs() end},
+    {"Close (Shift+W)",       function() Workspace:charIn("W") end },
+    {"File Manager",          function() File:manage() end},
+    {"Export to Clipboard",   function() File:exportToClipboard() end},
+    {"Import from Clipboard", function() File:imortClipboard() end}
+  },
+  {"Edit",
+    {"Undo (Shift+Z)",     function() Workspace:charIn("Z") end},
+    {"Redo (Shift+Y)",     function() Workspace:charIn("Y") end},
+    {"Zoom In      (+)",   function() Workspace:charIn("+") end},
+    {"Zoom Out   (-)",     function() Workspace:charIn("-") end},
+    {"Erase Entire Image", function() Workspace.Image:clearAll() end}
+  },
+  {"Image",
+    {"Resize Image",                function() Workspace:resizeImage() end},
+    {"Resize Canvas",               function() Workspace:resizeCanvas() end},
+    {"Flip Vertically",             function() Workspace.Image:flipV() end},
+    {"Flip Horizontally",           function() Workspace.Image:flipH() end},
+    {"Rotate 90° Clockwise",        function() Workspace.Image:rotateSelection(true) end},
+    {"Rotate 90° Counterclockwise", function() Workspace.Image:rotateSelection(false) end},
+  },
+  {"Drawing Tools",
+    {"Scroll                         (esc)",    function() Workspace:escapeKey() end},
+    {"Pencil                            (p)",   function() Workspace:charIn("p") end},
+    {"Paint Brush         (Shift+P)",           function() Workspace:charIn("P") end},
+    {"Eraser                           (e)",    function() Workspace:charIn("e") end},
+    {"Erase Area         (Shift+E)",            function() Workspace:charIn("E") end},
+    {"Fill Area                         (f)",   function() Workspace:charIn("f") end},
+    {"Line                                (l)", function() Workspace:charIn("l") end},
+    {"Gradient Line      (Shift+L)",            function() Workspace:charIn("L") end},
+    {"Circle                            (c)",   function() Workspace:charIn("c") end},
+    {"Filled Circle        (Shift+C)",          function() Workspace:charIn("C") end},
+    {"Rectangle                     (r)",       function() Workspace:charIn("r") end},
+    {"Filled Rectangle (Shift+R)",              function() Workspace:charIn("R") end},
+  },
+  {"Selection Tools",
+    {"Cut    (Ctrl+X)",             function() Workspace:cut() end },
+    {"Copy  (Ctrl+C)",              function() Workspace:copy() end },
+    {"Paste (Ctrl+V)",              function() Workspace:paste() end },
+    {"Crop Image",                  function() Workspace.Tool = "CropImage" Workspace:invalidate() end},
+    {"Flip Horizontally",           function() Workspace.Tool = "FlipHSelection" Workspace:invalidate() end },
+    {"Flip Vertically",             function() Workspace.Tool = "FlipVSelection" Workspace:invalidate() end },
+    {"Rotate 90° Clockwise",        function() Workspace.Tool = "RotateClockwise" Workspace:invalidate() end },
+    {"Rotate 90° Counterclockwise", function() Workspace.Tool = "RotateCounterclockwise" Workspace:invalidate() end },
+    {"Resize by Factor",            function() Workspace.Tool = "ResizeSelection" Workspace:invalidate() end },
+    {"Gradient Fill Selection",     function() Workspace.Tool = "GradientFillSelection" Workspace:invalidate() end },
+    {"Erase Selection",             function() Workspace.Tool = "EraseSelection" Workspace:invalidate() end },
+  },
+  {"Color",
+    {"Sample a Color                 (s)", function() Workspace:charIn("s") end },
+    {"Select Primary Color         (t)",   function() Workspace:charIn("t") end },
+    {"Select Secondary Color    (T)",      function() Workspace:charIn("T") end },
+    {"Swap Primary/Secondary (u)",         function() Workspace:charIn("u") end },
+    {"Darken Primary Color        (/)",    function() Workspace:charIn("*") end },
+    {"Lighten Primary Color        (*)",   function() Workspace:charIn("/") end },
+  },
+  {"Color Pallets",
+    
+  },
+  {"Filters",
+    {"Invert Colors",       function() Filters.invert()  end},
+    {"Replace Color",       function() Filters.replace() end},
+    {"Color to Alpha",      function() Filters.alpha() end},
+    {"Increase Brightness", function() Filters.increaseBrightness() end},
+    {"Decrease Brightness", function() Filters.decreaseBrightness() end}
+  },
+  {"View",
+    {"Tool Pallet (Ctrl+Menu)", function () end },
+    {"Text Stencil",            function () end },
+    {"Switch Image (w)",        function() Workspace:charIn("w") end },
+  },
+  {"Options",
+    {"Set 'Replace Color' Tolerance", function() Workspace:setTolerance() end },
+    {"Manage Color Pallets",          function() Pallets:manage() end },
+    {"Selection Tool Options",        function() Workspace:setSelectionType() end },
+    {"Show/Hide Image Previews",      function() Workspace:setPreview() end }
+  },
+  {"Help",
+    {"Help with this Tool",  function() end},
+    {"General Help",         function() end },
+    {"About nPaintShop 1.0", function() end},
+  }
+}
+toolpalette.register(menu)
+
+-- Optimizations:
+local math   = math
+local string = string
+local table  = table
+local image  = image
+
+local prefix = "jsef."
+local suffix = "_graphics"
+local code = {}
+local letter = string.byte("a")
+
+repeat
+  local moreCode = true
+  local char = string.char(letter)
+  local varName = prefix .. char .. suffix
+  local block = var.recall(varName)
+  if block then
+    table.insert(code, block)
+  else
+    moreCode = false
+  end
+  letter = letter + 1
+until not moreCode
+
+local runCode = table.concat(code)
+assert(loadstring(runCode))()
+local npsGraphics = npsGraphics
+
+local imgTools = {} -- Tools used by Image methods
+
+local function round(nb)
+  if nb > math.floor(nb) + 0.5 then
+    return math.floor(nb) + 1
+  else
+    return math.floor(nb)
+  end
+end
+local colorTo32 = {} -- Constants for 32-color values
+local colorTo256 = {} -- Constants for 256-color values
+local function prepareColorConstants()
+  for x = 0, 255 do
+    colorTo32[x] = round(x * 31 / 255)
+  end  
+  for x = 0, 31 do
+    colorTo256[x] = round(x * 255 / 31)
+  end
+end
+prepareColorConstants()
+
+local function reduceColor(color)
+  local r, g, b = unpack(color)
+  r = colorTo32[r]
+  g = colorTo32[g]
+  b = colorTo32[b]
+  return { r, g, b }
+end
+
+local function expandColor(color)
+  local r, g, b = unpack(color)
+  r = colorTo256[r]
+  g = colorTo256[g]
+  b = colorTo256[b]
+  return { r, g, b }  
+end
+
+local function sameColor(color1, color2)
+  local r1, g1, b1 = unpack(color1)
+  local r2, g2, b2 = unpack(color2)
+  
+  return r1 == r2 and g1 == g2 and b1 == b2  
+end
+
+local function generateIcon(icon, maxPixels)
+  local badImage = npsGraphics.badImage
+  if not string.find(icon, [[\016\000\001\000]]) then
+    icon = badImage
+  end
+  local iconStr  = [[temp = image.new("]] .. icon .. [[")]] 
+  assert(loadstring(iconStr))()
+  local w = temp:width()
+  local h = temp:height()
+  
+  if w > h then
+    h = round(maxPixels * h / w)
+    w = maxPixels
+  else
+    w = round(maxPixels * w / h)
+    h = maxPixels
+  end
+  
+  return temp:copy(w, h)
+end
+
+local function getImageData(imgParts)
+  local iconStr = {}
+  for x = 1, #imgParts do
+    iconStr[x] = var.recall(imgParts[x])
+  end
+  iconStr = table.concat(iconStr)
+  local str2      = imgTools.convertChars(iconStr)
+  local imgWidth  = mathTools.base2to10(mathTools.base10to2(tonumber(string.sub(str2, 10, 12) .. string.sub(str2, 7, 9) .. string.sub(str2, 4, 6) .. string.sub(str2, 1, 3))))
+  local imgHeight = mathTools.base2to10(mathTools.base10to2(tonumber(string.sub(str2, 22, 24) .. string.sub(str2, 19, 21) .. string.sub(str2, 16, 18) .. string.sub(str2, 13, 15))))
+
+  local icon    = generateIcon(iconStr, 80)
+  local imgData = {}
+  
+  imgData.imgWidth  = imgWidth
+  imgData.imgHeight = imgHeight
+  imgData.icon      = icon
+  return imgData
+end
+
+-- Multi-use dialogs:
+local function pixelDialog(title, callback, width, height)
+  local dialog = Dialog(title, 
+    Position {
+      top = "20%", left = "35%"
+    },
+    Dimension("30%", "114px")
+  )
+
+  local lblWidth = Label {
+    position = Position {
+      top = "30px", left = "5px"
+    },
+    text = "Width:"
+  }
+  
+  local txtWidth = Input {
+    position = Position { 
+      top = "30px", left = "16px", alignment = {
+        { ref = lblWidth, side = Position.Sides.Right }
+      }
+    },
+    number = true,
+    value = width or 0,
+    style = {
+      defaultWidth = 30
+    }
+  }
+
+  local lblHeight = Label {
+    position = Position {
+      top = "6px", left = "5px", alignment = {
+        { ref = lblWidth, side = Position.Sides.Bottom }
+      }
+    },
+    text = "Height:"
+  }
+  
+  local txtHeight = Input {
+    position = Position { 
+      top = "0px", left = "0px", alignment = {
+        { ref = lblHeight, side = Position.Sides.Top },
+        { ref = txtWidth, side = Position.Sides.Left }
+      }
+    },
+    number = true,
+    value = height or 0,
+    style = {
+      defaultWidth = 30
+    }
+  }
+  
+  local butOK = Button {
+    position = Position {
+      bottom = "4px", left = "40px"
+    },
+    text = "OK",
+    auto = true
+  }
+  function butOK:onAction()
+    if txtWidth.value < 1 or txtHeight.value < 1 then
+      gtk.showMessageBox("ERROR", "Width and height must each have a value greater than 0 pixels.")
+      return 
+    end
+    callback(txtWidth.value, txtHeight.value)
+    gtk.RootScreen:popScreen()
+    gtk.RootScreen:invalidate()
+  end
+      
+  dialog:addChildren(lblWidth, txtWidth, lblHeight, txtHeight, butOK)
+  dialog.defaultFocus = 2
+  gtk.RootScreen:pushScreen(dialog)
+  gtk.RootScreen:invalidate()
+end
+
+local function resizeDialog(callback)
+  local dialog = Dialog("Resize Image", Position{ top = "20%", left = "30%"}, Dimension("40%", "116px"))
+  
+  local lblXFactor = Label {
+    position = Position {
+      top = "30px", left = "5px"
+    },
+    text = "X - Scale: ",
+  }
+  
+  local lblYFactor = Label {
+    position = Position {
+      top = "7px", left = "5px", alignment = {
+        { ref = lblXFactor, side = Position.Sides.Bottom }
+      }
+    },
+    text = "Y - Scale: "
+  }
+  
+  local drpX = Dropdown {
+    position = Position {
+      top = "0px", left = "0px", alignment = {
+        { ref = lblXFactor, side = Position.Sides.Top },
+        { ref = lblXFactor, side = Position.Sides.Right }
+      }
+    },
+    items = { "1/4", "1/2", "1", "2", "4" },
+    value = "1",
+    style = {
+      defaultWidth = 50
+    }
+  }
+  
+  local drpY = Dropdown {
+    position = Position {
+      top = "0px", left = "0px", alignment = {
+        { ref = lblYFactor, side = Position.Sides.Top },
+        { ref = lblYFactor, side = Position.Sides.Right }
+      }
+    },
+    items = { "1/4", "1/2", "1", "2", "4" },
+    value = "1",
+    style = {
+      defaultWidth = 50
+    }
+  }
+  
+  local butOK = Button {
+    position = Position {
+      bottom = "3px", left = "20%"
+    },
+    text = "OK",
+    auto = true
+  }
+  function butOK:onAction()
+    local xFactor = tonumber(math.eval(drpX.value))
+    local yFactor = tonumber(math.eval(drpY.value))
+    gtk.RootScreen:popScreen()
+    gtk.RootScreen:invalidate()
+    callback(xFactor, yFactor)
+  end
+  
+  local butCancel = Button {
+    position = Position {
+      bottom = "3px", right = "10%"
+    },
+    text = "Cancel",
+    auto = true
+  }
+  function butCancel:onAction()
+    gtk.RootScreen:popScreen()
+    gtk.RootScreen:invalidate()
+  end
+  
+  dialog:addChildren(lblXFactor, lblYFactor, drpX, drpY, butOK, butCancel)
+  dialog.defaultFocus = 3
+  gtk.RootScreen:pushScreen(dialog)
+  gtk.RootScreen:invalidate()
+end
+
+-- Pallets table/object:
+do
+  Pallets.library = {}
+  Pallets.menu = {}
+  
+  function Pallets:save(pallet)
+    local ID = 1
+    
+    if not pallet.ID then
+      while var.recall("npscp.n" .. ID) do
+        ID = ID + 1
+      end
+      pallet.ID = ID
+    end
+    
+    local data = {}
+    data[1] = pallet.name
+    
+    for x = 0, 9 do
+      data[x + 2] = table.concat(pallet.colors[x], " ")
+    end
+    
+    var.store("npscp.n" .. ID, data)
+    self:load()
+    
+  end
+  
+  function Pallets:new(pallet)
+    local dialog = Dialog("Copy/New Pallet", Position{top = "30%", left = "25%"}, Dimension("50%", "84px"))
+    
+    local lblTitle = Label {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      text = "Title: "
+    }
+    
+    local txtTitle = Input {
+      position = Position {
+        top = "0px", left = "0px", alignment = {
+          { ref = lblTitle, side = Position.Sides.Top },
+          { ref = lblTitle, side = Position.Sides.Right }
+        }
+      },
+    }
+    
+    local butOK = Button { 
+      position = Position {
+        bottom = "3px", right = "4px"
+      },
+      text = "OK",
+      auto = true
+    }
+    function butOK:onAction()
+      pallet.name = txtTitle.value
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:popScreen()
+      Pallets:save(pallet)
+      Pallets:manage()
+    end
+    
+    local butCancel = Button {
+      position = Position {
+        bottom = "3px", right = "3px", alignment = {
+          { ref = butOK, side = Position.Sides.Left }
+        }
+      },
+      text = "Cancel",
+      auto = true
+    }
+    
+    dialog:addChildren(lblTitle, txtTitle, butOK, butCancel)
+    gtk.RootScreen:pushScreen(dialog)
+    gtk.RootScreen:invalidate()
+    
+  end
+  
+  function Pallets:load()
+    local varList = var.list()
+    local pallets = {}
+    
+    for x = 1, #varList do
+      local fileName = varList[x]
+      if fileName:find("npscp.n") == 1 then
+        local data = var.recall(fileName)
+        local pallet = {} 
+        
+        pallet.name = data[1]
+        pallet.colors = {}
+        pallet.ID = fileName:match("%d+")
+        
+        for y = 2, 11 do
+          local color = data[y]
+          color = color:split()
+          
+          color[1] = tonumber(color[1])
+          color[2] = tonumber(color[2])
+          color[3] = tonumber(color[3])
+          
+          pallet.colors[y - 2] = { unpack(color) }
+        end
+        table.insert(pallets, pallet)
+      end
+    end
+    
+    local function sortPallets(a, b)
+      return a.name < b.name
+    end
+    
+    table.sort(pallets, sortPallets)
+    
+    -- Add "Standard" pallet:
+    local standard = {}
+    standard.ID = false
+    standard.name = "Standard"
+    standard.colors = {
+      [0] = { 255, 255, 255 },
+      [1] = { 255,   0,   0 },
+      [2] = { 255, 255,   0 },
+      [3] = { 255,   0, 255 },
+      [4] = {   0, 255, 255 },
+      [5] = {   0, 255,   0 },
+      [6] = {   0,   0, 255 },
+      [7] = { 255, 152,   0 },
+      [8] = { 130, 130, 130 },
+      [9] = {   0,   0,   0 }
+    }
+    table.insert(pallets, 1, standard)
+    
+    self.library = pallets
+    self.palletList = {}
+    
+    -- Create menu and list of pallet names:
+    menu[7] = { "Color Pallets" }
+    for x = 1, #pallets do
+      local pallet = pallets[x]
+      local item = { pallet.name, function() Pallets:set(x) end }
+      table.insert(menu[7], item)
+      table.insert(self.palletList, pallet.name)
+    end
+    
+    toolpalette.register(menu)
+  end
+  
+  function Pallets:set(menuItem)
+    Workspace.Pallet = self.library[menuItem].colors
+    Workspace:invalidate()
+  end
+  
+  
+  function Pallets:manage()
+    local dialog = Dialog("Pallet Definitions", Position{ top = "10%", left = "20%"}, Dimension("60%", "80%"))
+    local pallet = self.library[1]
+    local colors = pallet.colors
+    
+    local lblTitle = Label {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      text = "Title: "
+    }
+    
+    local drpTitle = Dropdown {
+      position = Position {
+        top = "30px", left = "0px", alignment = {
+          { ref = lblTitle, side = Position.Sides.Right }
+        }
+      },
+      items = self.palletList,
+      style = {
+        defaultWidth = 142
+      }
+    }
+  
+    dialog:addChildren(lblTitle, drpTitle)
+    
+    local lblNumbers = {}
+    local butColors  = {}
+    
+    for x = 0, 9 do
+      lblNumbers[x] = Label {
+        position = Position {
+          top = (x < 5 and (60 + x * 20) or (60 + (x - 5) * 20)) .. "px", left = (x > 4 and "40%" or "30px")
+        },
+        text = x .. ": "
+      }
+      
+      butColors[x] = Button {
+        position = Position {
+          top = "2px", left = "0px", alignment = {
+            { ref = lblNumbers[x], side = Position.Sides.Top },
+            { ref = lblNumbers[x], side = Position.Sides.Right }
+          }
+        },
+        style = {
+          defaultWidth = 15,
+          defaultHeight = 15,
+          backgroundColor = pallet.colors[x],
+          focusColor = {0, 0, 0}
+        }
+      }
+      butColors[x].index = x
+      butColors[x].onAction = function(self)
+        local pallet = Pallets.library[drpTitle.valuen]
+        local index  = self.index
+        local color  = pallet.colors[index]
+
+        gtk.showColorDialog("Color #: " .. x, color, function (c) pallet.colors[index] = c end)
+      end
+      
+      dialog:addChildren(lblNumbers[x], butColors[x])
+    end
+  
+    local butSave = Button {
+      position = Position {
+        top = "4px", right = "7px", alignment = {
+          { ref = drpTitle, side = Position.Sides.Bottom }
+        }
+      },
+      text = "Save",
+      auto = false,
+      style = {
+        defaultWidth = 50
+      }
+    }
+    function butSave:onAction()
+      Pallets:save(pallet)
+    end
+    
+    local butCopy = Button {
+      position = Position {
+        top = "1px", right = "0px", alignment = {
+          { ref = butSave, side = Position.Sides.Bottom },
+          { ref = butSave, side = Position.Sides.Right }
+        }
+      },
+      text = "New",
+      auto = false,
+      style = {
+        defaultWidth = 50,
+      }
+    }
+    function butCopy:onAction()
+      local newPallet = deepcopy(pallet)
+      newPallet.name = "New"
+      Pallets:new(newPallet)
+    end
+    
+    local butDel = Button {
+      position = Position {
+        top = "1px", right = "0px", alignment = {
+          { ref = butCopy, side = Position.Sides.Bottom },
+          { ref = butCopy, side = Position.Sides.Right }
+        }
+      },
+      text = "Delete",
+      auto = false,
+      style = {
+        font = {
+          size = 9
+        },
+        defaultWidth = 50
+      }
+    }
+    function butDel:onAction()
+      local index  = drpTitle.valuen
+      local pallet = Pallets.library[index]
+      
+      if not pallet.ID then
+        return 
+      end
+      
+      local fileName = "npscp.n" .. pallet.ID
+      math.eval("DelVar " .. fileName)
+      gtk.RootScreen:popScreen()
+      Pallets:load()
+      Pallets:set(1)
+      Pallets:manage()
+    end
+    
+    local butCancel = Button {
+      position = Position {
+        top = "1px", right = "0px", alignment = {
+          { ref = butDel, side = Position.Sides.Bottom },
+          { ref = butDel, side = Position.Sides.Right }
+        }
+      },
+      text = "Cancel",
+      auto = false,
+      style = {
+        font = {
+          size = 9
+        },
+        defaultWidth = 50
+      }
+    }
+    function butCancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+    
+    dialog:addChildren(butSave, butCopy, butDel, butCancel) 
+    
+    dialog.defaultFocus = 2
+    gtk.RootScreen:pushScreen(dialog)    
+    gtk.RootScreen:invalidate()
+    
+    function drpTitle:change(sel)
+      if sel == 1 then
+        butSave:disable()
+        butDel:disable()
+      else
+        butSave:enable()
+        butDel:enable()
+      end
+      pallet = Pallets.library[sel]
+      for x = 0, 9 do
+        butColors[x].style.backgroundColor = pallet.colors[x]
+      end
+    end
+    drpTitle:change(1)
+  end
+  
+end
+
+-- Image class with properties, history and methods
+local Image   = class()
+do
+  function Image:init(width, height)
+    self.history    = {}
+    self.historyPos = 0
+    self.modified   = false
+    self.info       = {
+      size = {
+        width  = width,
+        height = height
+      },
+      fileName  = "Untitled" .. (#Images + 1),
+      projectID = false,   -- i.e. not assigned yet
+    }
+      
+    local pixels = {}
+    for x = 1, width do
+      pixels[x] = {}
+      for y = 1, height do
+        pixels[x][y] = false -- i.e. a blank pixel
+      end
+    end
+    self.pixels = pixels
+    
+    self.imageStr = ""
+    
+  end
+
+  function imgTools.getPixel(byte1, byte2)
+    local str = imgTools.addZeros(mathTools.base10to2(tonumber(byte2)), 8) .. imgTools.addZeros(mathTools.base10to2(tonumber(byte1)), 8)
+    if tonumber(string.sub(str, 1, 1)) == 1 then
+      return {mathTools.base2to10(string.sub(str, 2, 6)), mathTools.base2to10(string.sub(str, 7, 11)), mathTools.base2to10(string.sub(str, 12, 16))}
+    else
+      return false
+    end
+  end
+  
+  function imgTools.getSize(imgStr)
+    local imgWidth = mathTools.base2to10(mathTools.base10to2(tonumber(string.sub(imgStr, 10, 12) .. string.sub(imgStr, 7, 9) .. string.sub(imgStr, 4, 6) .. string.sub(imgStr, 1, 3))))
+    local imgHeight = mathTools.base2to10(mathTools.base10to2(tonumber(string.sub(imgStr, 22, 24) .. string.sub(imgStr, 19, 21) .. string.sub(imgStr, 16, 18) .. string.sub(imgStr, 13, 15))))
+    return imgWidth, imgHeight
+  end
+  
+  function imgTools.addZeros(str, strSize)
+    return string.rep("0", strSize - string.len(str)) .. str
+  end
+  
+  function imgTools.convertChars(img)
+    local finished, img2, index
+    index = 1
+    img2 = ""
+    finished = false
+    
+    while not finished do
+      if string.sub(img, index, index) ~= [[\]] then
+        img2 = img2 .. imgTools.addZeros(tostring(string.byte(string.sub(img, index, index))), 3)
+        index=index + 1
+      else
+        img2 = img2 .. string.sub(img, index + 1, index + 3)
+        index = index + 4
+      end
+      if index > string.len(img) then
+        finished = true
+      end
+    end
+    return img2
+  end
+  
+  function imgTools.generateHeader(width, height)
+    local binaryHeader, header
+    binaryHeader = {}
+    binaryHeader[1] = imgTools.addZeros(mathTools.base10to2(width), 32)
+    binaryHeader[2] = imgTools.addZeros(mathTools.base10to2(height), 32)
+    binaryHeader[3] = imgTools.addZeros(mathTools.base10to2(width * 2), 32)
+    header = {"", "", ""}
+    for i = 1, 3 do
+      for j = 3, 0, -1 do
+        header[i] = header[i] .. imgTools.addZeros(tostring(mathTools.base2to10(string.sub(binaryHeader[i], 8 * j + 1, 8 * (j + 1)))), 3)
+      end
+    end
+    return header[1] .. header[2] .. "000000000000" .. header[3] .. "016000001000"
+  end
+  
+  function imgTools.convertPixel(pixel)
+    local str, n1, n2, m1, m2, p1
+    
+    if not pixel then
+      pixel = {0, 0, 0}
+      p1 = 0
+    else
+      p1 = 1
+    end
+     
+    str = tostring(p1) .. imgTools.addZeros(mathTools.base10to2(pixel[1]), 5) .. imgTools.addZeros(mathTools.base10to2(pixel[2]), 5) .. imgTools.addZeros(mathTools.base10to2(pixel[3]), 5)
+    n1 = imgTools.addZeros(tostring(mathTools.base2to10(string.sub(str, 9, 16))), 3)
+    n2 = imgTools.addZeros(tostring(mathTools.base2to10(string.sub(str, 1, 8))), 3)
+    if tonumber(n1) >= 32 and tonumber(n1) < 127 then
+      m1 = string.find(" !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~", string.uchar(tonumber(n1)), 1, true)
+    end
+    if tonumber(n2) >= 32 and tonumber(n2) < 127 then
+      m2 = string.find(" !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~", string.uchar(tonumber(n2)), 1, true)
+    end
+    return (m1 == nil and [[\]] .. n1 or string.uchar(tonumber(n1))) .. (m2 == nil and [[\]] .. n2 or string.uchar(tonumber(n2)))
+  end
+  
+  function imgTools.addSlashes(str)
+    local finished, str2, index
+    finished = false
+    str2 = [[\]] .. str
+    index = 1
+    while not finished do
+      index = index + 4
+      if index > string.len(str2) then
+        finished = true
+      else
+        str2 = string.sub(str2, 1, index - 1) .. [[\]] .. string.sub(str2, index)
+      end
+    end
+    return str2
+  end
+  
+  function imgTools.img2table(str)
+    if not string.find(str,[[\016\000\001\000]]) then
+      gtk.showMessageBox("Error", "Cannot to load/process image.↵Error: unrecognized format.")
+      return false
+    else
+      local index
+      local str2 = imgTools.convertChars(str)
+      local imgWidth, imgHeight = imgTools.getSize(str2)
+      local imgTable = {}
+      for i = 1, imgWidth do
+        imgTable[i] = {}
+        for j = 1, imgHeight do
+          index = (i - 1) * 6 + 61 + (j - 1) * 6 * imgWidth
+          imgTable[i][j] = imgTools.getPixel(string.sub(str2, index, index + 2), string.sub(str2, index + 3, index + 5))
+        end 
+      end
+
+      return imgTable
+    end
+  end
+
+  function Image:resize(xFactor, yFactor, x1, y1, x2, y2)
+    local imgWidth  = self.info.size.width
+    local imgHeight = self.info.size.height
+    local imgTable  = self.pixels
+    local x1 = x1 or 1
+    local y1 = y1 or 1
+    local x2 = x2 or imgWidth
+    local y2 = y2 or imgHeight
+    local tempImg   = {}
+    local allPixels = false
+    
+    self:addHistory()
+    
+    x1, x2 = math.min(x1, x2), math.max(x1, x2)
+    y1, y2 = math.min(y1, y2), math.max(y1, y2)
+    
+    if x1 == 1 and y1 == 1 and x2 == imgWidth and y2 == imgHeight then
+      allPixels = true
+    end
+
+    local xStep = xFactor < 1 and (1 / xFactor) or 1
+    local yStep = yFactor < 1 and (1 / yFactor) or 1
+    
+    local pixel = false
+    local numPixels = 0
+    for i = x1, x2, xStep do
+      tempImg[(i - x1)/xStep + 1] = {}
+      for j = y1, y2, yStep do
+        pixel = false
+        numPixels = 0
+        for m = 1, xStep do
+          for n = 1, yStep do
+            if imgTable[i + m - 1] and imgTable[i + m - 1][j + n - 1] then
+              if not pixel then
+                pixel = { unpack(imgTable[i + m - 1][j + n - 1]) }
+              else
+                pixel[1] = pixel[1] + imgTable[i + m - 1][j + n - 1][1]
+                pixel[2] = pixel[2] + imgTable[i + m - 1][j + n - 1][2]
+                pixel[3] = pixel[3] + imgTable[i + m - 1][j + n - 1][3]
+              end
+              imgTable[i + m - 1][j + n - 1] = false
+              numPixels = numPixels + 1
+            end
+          end
+        end
+        if pixel then
+          pixel[1] = math.floor(pixel[1] / numPixels)
+          pixel[2] = math.floor(pixel[2] / numPixels)
+          pixel[3] = math.floor(pixel[3] / numPixels)
+          tempImg[(i - x1)/xStep + 1][(j - y1)/yStep + 1] = { unpack(pixel) }
+        else
+          tempImg[(i - x1)/xStep + 1][(j - y1)/yStep + 1] = false
+        end        
+      end
+    end
+
+    local newImg = {}
+    local pixel  = false
+    local x, y   = 1, 1
+
+    for i = 1, round(imgWidth * xFactor)  do
+      newImg[i] = {}
+      for j = 1, round(imgHeight * yFactor) do
+        newImg[i][j] = false
+      end
+    end
+
+    xVal = xFactor < 1 and 1 or xFactor
+    yVal = yFactor < 1 and 1 or yFactor
+    
+    for i = 1, math.floor((x2 - x1 + 1)/xStep) do
+      x = 1 + xVal * i - xVal
+      for j = 1, math.floor((y2 - y1 + 1)/yStep) do
+        y = 1 + yVal * j - yVal
+        if tempImg[i][j] then
+          pixel = { unpack(tempImg[i][j]) }
+        else
+          pixel = false
+        end
+        for m = 0, xVal - 1 do
+          for n = 0, yVal - 1 do
+            if pixel then
+              newImg[x + m][y + n] = { unpack(pixel) }
+            end
+          end
+        end
+      end
+    end
+    
+    if allPixels then
+      self.pixels = newImg
+      self.info.size.width = round(imgWidth * xFactor)
+      self.info.size.height = round(imgHeight * yFactor)
+    else
+      for i = x1, x1 + math.floor((x2 - x1 + 1) * xFactor) do
+        if i > imgWidth then
+          break
+        end
+        for j = y1, y1 + math.floor((y2 - y1 + 1) * yFactor) do
+          if j > imgHeight then
+            break
+          end
+          if newImg[i - x1 + 1] then
+            if newImg[i - x1 + 1][j - y1 + 1] then
+              imgTable[i][j] = { unpack(newImg[i - x1 + 1][j - y1 + 1]) }
+            else
+              imgTable[i][j] = false
+            end
+          end
+        end
+      end
+    end
+    
+    self.modified = true
+    Workspace:invalidate()
+  end
+
+  function Image:rotateSelection(clockwise, x1, y1, x2, y2)
+    local newImg    = {}
+    local imgTable  = self.pixels
+    local imgHeight = self.info.size.height
+    local imgWidth  = self.info.size.width
+    local allPixels = false
+    
+    self:addHistory()
+    
+    x1 = x1 or 1
+    x2 = x2 or imgWidth
+    y1 = y1 or 1
+    y2 = y2 or imgHeight
+    
+    x1, x2 = math.min(x1, x2), math.max(x1, x2)
+    y1, y2 = math.min(y1, y2), math.max(y1, y2)
+    
+    if x1 == 1 and y1 == 1 and x2 == imgWidth and y2 == imgHeight then
+      allPixels = true
+    end
+    
+    local height = y2 - y1 + 1
+    local width  = x2 - x1 + 1
+
+    for i = y1, y2 do
+      newImg[i] = {}
+      for j = x1, x2  do
+        if clockwise and (allPixels or (i <= imgWidth and j <= imgHeight)) then
+          if imgTable[j][y1 + (y2 - i)] then
+            newImg[i][j] = { unpack(imgTable[j][y1 + (y2 - i)]) }
+          else
+            newImg[i][j] = false
+          end
+        elseif not clockwise and (allPixels or (i <= imgWidth and j <= imgHeight)) then
+          if imgTable[x1 + (x2 - j)][i] then
+            newImg[i][j] = { unpack(imgTable[x1 + (x2 - j)][i]) }
+          else
+            newImg[i][j] = false
+          end
+        end
+      end
+    end
+    
+    if allPixels then
+      imgWidth, imgHeight   = imgHeight, imgWidth
+      self.info.size.height = imgHeight
+      self.info.size.width  = imgWidth
+      self.pixels           = newImg
+      Workspace:reset()
+    else
+      for i = x1, x2 do
+        for j = y1, y2 do
+          imgTable[i][j] = false
+        end
+      end
+      
+      for i = y1, y2 do
+        if i > imgWidth then
+          break
+        end
+        for j = x1, x2 do
+          if j > imgHeight then
+            break
+          end
+          imgTable[x1 + (i - y1)][y1 + (j - x1)] = newImg[i][j]
+        end
+      end
+    end
+    
+    self.modified = true
+    Workspace:invalidate()
+
+  end
+    
+  function Image:exportAsString(x, y, width, height)
+    local imgStr = imgTools.addSlashes(imgTools.generateHeader(width, height))
+    local pixelStrList = {}
+    local imgTable = self.pixels
+    
+    for i = y, y + height - 1  do
+      for j = x, x + width - 1 do
+        table.insert(pixelStrList, imgTools.convertPixel(imgTable[j][i]))
+      end
+    end
+    imgStr = imgStr .. table.concat(pixelStrList)
+    
+    return imgStr
+  end
+  
+  function Image:importString(imgString, x, y, sourceMode, pasteMode)
+    local imgTable  = imgTools.img2table(imgString)
+    local imgString = imgTools.convertChars(imgString)
+    local pixels    = self.pixels
+    local width     = self.info.size.width
+    local height    = self.info.size.height
+    local w, h      = imgTools.getSize(imgString)
+    local x         = x or 1
+    local y         = y or 1
+    
+    for i = 1, w do
+      if x + i - 1 > width then
+        break
+      end
+      for j = 1, h do
+        if y + j - 1 > height then
+          break
+        end
+        
+        local souceOK = false
+        local pasteOK = false
+
+        if (imgTable[i][j] and (sourceMode == "All Pixels" or sourceMode == "Colored Pixels")) or (not imgTable[i][j] and (sourceMode == "All Pixels" or sourceMode == "Empty Pixels")) then
+          sourceOK = true
+        else
+          sourceOK = false
+        end
+        if (pixels[x + i - 1][y + j - 1] and (pasteMode == "Overwrite All" or pasteMode == "On Colored Pixels")) or (not pixels[x + i - 1][y + j - 1] and (pasteMode == "Overwrite All" or pasteMode == "On Empty Pixels")) then
+          pasteOK = true
+        else
+          pasteOK = false
+        end
+        
+        if sourceOK and pasteOK then
+          if imgTable[i][j] then
+            pixels[x + i - 1][y + j - 1] = { unpack(imgTable[i][j]) }
+          else
+            pixels[x + i - 1][y + j - 1] = false
+          end
+        end
+      end
+    end
+  end
+
+  function Image:flipV(x1, y1, x2, y2)
+    local imgWidth  = self.info.size.width
+    local imgHeight = self.info.size.height
+    local imgTable  = self.pixels
+    local x1        = x1 or 1
+    local y1        = y1 or 1
+    local x2        = x2 or imgWidth
+    local y2        = y2 or imgHeight
+    
+    x1, x2 = math.min(x1, x2), math.max(x1, x2)
+    y1, y2 = math.min(y1, y2), math.max(y1, y2)
+    
+    self:addHistory()
+    local newImg = {}
+    
+    for i = x1, x2 do
+      newImg[i] = {}
+      for j = y1, y2 do
+        if imgTable[i][y2 - j + 1] then
+          newImg[i][j] = { unpack(imgTable[i][y2 - j + 1]) }
+        else
+          newImg[i][j] = false
+        end
+      end
+    end
+    
+    if x1 == 1 and x2 == imgWidth and y1 == 1 and y2 == imgHeight then
+      self.pixels = newImg
+    else
+      for i = x1, x2 do
+        for j = y1, y2 do
+          if newImg[i][j] then
+            imgTable[i][j] = { unpack(newImg[i][j]) }
+          else
+            imgTable[i][j] = false
+          end
+        end
+      end
+      self.pixels = imgTable
+    end
+    
+    self.modified = true
+    
+    Workspace:invalidate()
+  end
+
+  function Image:flipH(x1, y1, x2, y2)
+    local imgWidth  = self.info.size.width
+    local imgHeight = self.info.size.height
+    local imgTable  = self.pixels
+    local x1        = x1 or 1
+    local y1        = y1 or 1
+    local x2        = x2 or imgWidth
+    local y2        = y2 or imgHeight
+    
+    x1, x2 = math.min(x1, x2), math.max(x1, x2)
+    y1, y2 = math.min(y1, y2), math.max(y1, y2)
+    
+    self:addHistory()
+    local newImg = {}
+    
+    for i = x1, x2 do
+      newImg[i] = {}
+      for j = y1, y2 do
+        if imgTable[x2 - i + 1][j] then
+          newImg[i][j] = { unpack(imgTable[x2 - i + 1][j]) }
+        else
+          newImg[i][j] = false
+        end
+      end
+    end
+    
+    if x1 == 1 and x2 == imgWidth and y1 == 1 and y2 == imgHeight then
+      self.pixels = newImg
+    else
+      for i = x1, x2 do
+        for j = y1, y2 do
+          if newImg[i][j] then
+            imgTable[i][j] = { unpack(newImg[i][j]) }
+          else
+            imgTable[i][j] = false
+          end
+        end
+      end
+      self.pixels = imgTable
+    end
+    
+    self.modified = true
+    
+    Workspace:invalidate()
+  end
+  
+  --  Functions used for image history:
+  local function copyImg(img)
+    local newImg = {}
+    for i = 1, #img do
+      newImg[i] = {}
+      for j = 1, #img[i] do
+        if img[i][j] then
+          newImg[i][j] = { unpack(img[i][j]) }
+        else
+          newImg[i][j] = false
+        end
+      end
+    end
+    return newImg
+  end
+  
+  function Image:addHistory() -- TODO: Make it based on actions, like vector image.
+    local historyPos = self.historyPos
+    local imgHistory = self.history
+    local imgTable   = self.pixels
+    local imgWidth   = self.info.size.width
+    local imgHeight  = self.info.size.height
+    
+    if historyPos > 0 then
+      imgHistory[0] = nil
+      for i = 1, historyPos do
+        table.remove(imgHistory, 1)
+      end
+      collectgarbage()
+      historyPos = 0
+    end
+    
+    local history = copyImg(imgTable)
+    history.size = {imgWidth, imgHeight}
+    table.insert(imgHistory, 1, history)
+    if #imgHistory > 5 then
+      table.remove(imgHistory)
+      collectgarbage()
+    end
+    
+    self.history = imgHistory
+    self.historyPos = historyPos
+    Workspace:updateMenu()
+  end
+
+  function Image:clearHistory()
+    self.history = {}
+    self.historyPos = 0
+  end
+  
+  function Image:undo()
+    local historyPos = self.historyPos
+    local imgHistory = self.history
+    local imgTable   = self.pixels
+    local imgWidth   = self.info.size.width
+    local imgHeight  = self.info.size.height
+
+    if imgTable then
+      if historyPos < 5 then
+        if imgHistory[historyPos + 1] then
+          if historyPos == 0 then
+            imgHistory[0] = copyImg(imgTable)
+            imgHistory[0].size = {imgWidth, imgHeight}
+          end
+          historyPos = historyPos + 1
+          imgTable = copyImg(imgHistory[historyPos])
+          imgWidth, imgHeight = unpack(imgHistory[historyPos].size)
+          gtk.RootScreen:invalidate()
+        end
+      end
+      
+      self.historyPos       = historyPos
+      self.history          = imgHistory
+      self.info.size.width  = imgWidth
+      self.info.size.height = imgHeight
+      self.pixels           = imgTable
+    end
+  end
+    
+  function Image:redo()
+    local historyPos = self.historyPos
+    local imgHistory = self.history
+    local imgTable   = self.pixels
+    local imgWidth   = self.info.size.width
+    local imgHeight  = self.info.size.height
+
+    if imgTable then
+      if historyPos > 0 then
+        historyPos = historyPos - 1
+        imgTable = copyImg(imgHistory[historyPos])
+        imgWidth, imgHeight = unpack(imgHistory[historyPos].size)
+        gtk.RootScreen:invalidate()
+      end
+    end
+      
+    self.historyPos       = historyPos
+    self.history          = imgHistory
+    self.info.size.width  = imgWidth
+    self.info.size.height = imgHeight
+    self.pixels           = imgTable
+  end
+
+  function Image:clearAll()
+    local imgTable   = self.pixels
+    local imgWidth   = self.info.size.width
+    local imgHeight  = self.info.size.height
+    
+    local function eraseAll()
+      self.modified = true
+      self:addHistory()
+      
+      for i = 1, imgWidth do
+        for j = 1, imgHeight do
+          imgTable[i][j] = false
+        end
+      end
+      collectgarbage()
+    end
+    
+    gtk.showConfirmationBox("Erase Entire Image", "Are you sure that you want to erase the entire image?", eraseAll)
+  end
+  
+end
+
+---------------------
+-- File I/O Object --
+---------------------
+do
+  -- npfh.n## = { "fileName", npf.n##, npf.n## ... }
+  -- npf.n##  = "imageString" (or part of one) up to 10,000 chars
+  -- npfp.n## = project file (list of actions taken for npfh.n## of the same ID
+  File.imageHeaders = {}
+
+  -- Utilities used by File methods:  
+  local function getFileName(Image, continue)
+    local fileName = Image.info.fileName
+    local width    = Image.info.size.width
+    local height   = Image.info.size.height
+    
+    local icon     = generateIcon(Image.imageStr, 43)  
+    
+    local dialog = Dialog("Save Image", 
+      Position {
+        top = "20%", left = "20%"
+      },
+      Dimension("60%", "60%")
+    )
+
+    local lblName = Label {
+      position = Position {
+        bottom = "36px", left = "4px"
+      },
+      text = "Name: "
+    }
+    
+    local txtName = Input {
+      position = Position {
+        top = "0px", left = "0px", alignment = {
+          { ref = lblName, side = Position.Sides.Top },
+          { ref = lblName, side = Position.Sides.Right }
+        }
+      },
+      value = fileName,
+      style = {
+        defaultWidth = 140
+      }
+    }
+    
+    local butOK = Button {
+      position = Position {
+        bottom = "3px", left = "30%"
+      },
+      text = "OK",
+      auto = true
+    }
+    function butOK:onAction()
+      Image.info.fileName = txtName.value
+      continue()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+
+    local butCancel = Button {
+      position = Position {
+        bottom = "3px", right = "25%"
+      },
+      text = "Cancel",
+      auto = true
+    }
+    function butCancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+    
+    local lblDimension = Label {
+      position = Position {
+        top = "27px", left = "55%"
+      },
+      text = "Dimensions:",
+      style = {
+        font = {
+          size = 9
+        }
+      }
+    }
+    
+    local lblDimensionData = Label {
+      position = Position {
+        top = "47px", left = "60%"
+      },
+      text = width .. " x " .. height .. " pixels",
+      style = {
+        font = {
+          size = 8
+        }
+      }
+    }
+    
+    function dialog:draw(gc, x, y, width, height)
+      Dialog.draw(self, gc, x, y, width, height)
+      gc:drawImage(icon, 110, 68)
+      gc:drawRect(110, 68, 43, 43)
+    end
+    
+    dialog.defaultFocus = 2
+    dialog:addChildren(lblName, txtName, butOK, butCancel, lblDimension, lblDimensionData)
+    gtk.RootScreen:pushScreen(dialog)
+    gtk.RootScreen:invalidate()
+  end
+
+  function File:list() -- Lists nPaint images from header files.
+    local varList = var.list()
+    local imageHeaders = {}
+    
+    for x = 1, #varList do
+      local fileName = varList[x]
+      if fileName:find("npfh") == 1 then
+        local header = var.recall(fileName)
+        local entry  = {}
+        entry.name = header[1]
+        table.remove(header, 1)
+        entry.parts = header
+        entry.projectID = tonumber(fileName:match("%d+"))
+        table.insert(imageHeaders, entry)
+      end
+    end
+
+    local function sort(a, b)
+      return string.lower(a.name) < string.lower(b.name)
+    end
+    
+    table.sort(imageHeaders, sort)
+    self.imageHeaders = imageHeaders
+  end
+  
+  function File:loadProject()
+    -- FUTURE VERSION
+  end
+  
+  function File:closeFile()
+    local Image = Workspace.Image
+    if not Image then
+      return 
+    end
+    
+    if Image.modified then
+      Image.modified = false
+      gtk.showConfirmationBox("Discard Changes", "The current image has been modified.  Do you wish to save before closing?", File.saveImage)
+    else
+      for x = 1, #Images do
+        if Images[x] == Image then
+          table.remove(Images, x)
+          if #Images > 0 then
+            if x > 1 then
+              Workspace.Image = Images[x - 1]
+            elseif x == 1 then
+              Workspace.Image = Images[x]
+            end
+          else
+            Workspace.Image = false
+          end
+          break
+        end
+      end
+      Workspace:updateMenu()
+      collectgarbage()
+    end
+  end
+  
+  function File:openImageDialog()
+    local headers = File.imageHeaders
+    local titles  = {}
+    
+    for x = 1, #headers do
+      local header = headers[x]
+      table.insert(titles, header.name)
+    end
+    
+    local dialog = Dialog("Open Image File", 
+      Position {
+        top = "10%", left = "10%"
+      },
+      Dimension("80%", "80%")
+    )
+    
+    local lstFiles = List {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      items = titles,
+      style = {
+        defaultHeight = 134,
+        defaultWidth = 150,
+        lineHeight = 15,
+        font = {
+          size = 9
+        }
+      }
+    }
+
+    lblTitle = Label {
+      position = Position {
+        top = "27px", left = "10px", alignment = {
+          { ref = lstFiles, side = Position.Sides.Right }
+        }
+      },
+      text = "Preview:"
+    }
+    
+    lblDimensions = Label {
+      position = Position {
+        top = "127px", left = "10px", alignment = {
+          { ref = lstFiles, side = Position.Sides.Right }
+        }
+      },
+      text = "",
+      center = true,
+      style = {
+        defaultWidth = 80,
+        font = {
+          size = 6
+        }
+      }
+    }
+        
+    function lstFiles:change(sel)
+      local header  = headers[sel]
+      local parts   = header.parts
+      local iconStr = {}
+      local imgWidth = "n/a"
+      local imgHeight = "n/a"
+
+      if Workspace.showPreviews then
+        local imgData = getImageData(parts)
+        dialog.icon   = imgData.icon
+        dialog.imgWidth = imgData.imgWidth
+        dialog.imgHeight = imgData.imgHeight
+        imgWidth = dialog.imgWidth
+        imgHeight = dialog.imgHeight
+      end
+
+      lblDimensions.text = "( " .. imgWidth .. " x " .. imgHeight .. " )"
+      self.parent:invalidate()
+    end
+    
+    function dialog:draw(gc, x, y, width, height)
+      Dialog.draw(self, gc, x, y, width, height)
+      if Workspace.showPreviews then
+        gc:drawImage(dialog.icon, 195, 66)
+      end
+      gc:drawRect(195, 66, 80, 80)
+    end
+    
+    local butLoad = Button {
+      position = Position {
+        bottom = "3px", right = "3px"
+      },
+      text = "Open",
+      auto = true,
+      style = {
+        defaultHeight = 25,
+        font = {
+          size = 9
+        }
+      }
+    }
+    function butLoad:onAction()
+      local sel = lstFiles.selected
+      local header = headers[sel]
+      
+      if not Workspace.showPreviews then
+        local parts   = header.parts
+        local imgData = getImageData(parts)
+        dialog.icon   = imgData.icon
+        dialog.imgWidth = imgData.imgWidth
+        dialog.imgHeight = imgData.imgHeight
+      end
+
+      header.imgWidth = dialog.imgWidth
+      header.imgHeight = dialog.imgHeight
+
+      File:loadImage(header)
+
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+    
+    local butCancel = Button {
+      position = Position {
+        bottom = "3px", right = "3px", alignment = {
+          { ref = butLoad, side = Position.Sides.Left }
+        }
+      },
+      text = "Cancel",
+      auto = true,
+      style = {
+        defaultHeight = 25,
+        font = {
+          size = 9
+        }
+      }
+    }
+    function butCancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+
+    function lstFiles:onAction()
+      butLoad:onAction()
+    end
+    
+    dialog:addChildren(lstFiles, lblTitle, lblDimensions, butLoad, butCancel)
+    dialog.defaultFocus = 1
+    gtk.RootScreen:pushScreen(dialog)
+    lstFiles:change(1)
+    gtk.RootScreen:invalidate()
+  end
+
+  function File:loadImage(headerFile)
+    local w = headerFile.imgWidth
+    local h = headerFile.imgHeight
+    local newImage   = Image(w, h)
+    local imageParts = headerFile.parts
+    local strTable   = {}
+    
+    for x = 1, #imageParts do
+      local part = var.recall(imageParts[x])
+      table.insert(strTable, part)
+    end
+    
+    local imgStr = table.concat(strTable)
+    
+    newImage.info.fileName = headerFile.name
+    newImage.info.projectID = headerFile.projectID
+    newImage:importString(imgStr, 1, 1, "All Pixels", "Overwrite All")
+    table.insert(Images, newImage)
+    Workspace.Image = newImage
+    Workspace:reset()
+    --Workspace:updateMenu()
+  end
+  
+  function File:saveProject()
+    -- FUTURE VERSION
+  end
+  
+  function File:saveAs(continue)
+    local Image   = Workspace.Image
+    local oldName = Image.info.fileName
+    
+    -- Force act like it's a new image:
+    Image.info.fileName  =  oldName .. " copy"
+    Image.info.projectID = false
+    
+    File:saveImage(continue)
+  end
+  
+  function File:saveImage(continue)
+    local Image     = Workspace.Image
+    local fileName  = Image.info.fileName
+    local projectID = Image.info.projectID
+    local width     = Image.info.size.width
+    local height    = Image.info.size.height
+    local imageStr  = Image:exportAsString(1, 1, width, height)
+    local strTable  = {}
+    local index     = 1
+    
+    repeat
+      local imagePart = imageStr:sub(index, index + 9996)
+      table.insert(strTable, imagePart)
+      index = index + 9997
+    until index > #imageStr
+    
+    local function save()
+      File:delete(Image.info.projectID)
+      local parts     = strTable
+      local fileName  = Image.info.fileName
+      local partNames = {}
+
+      for x = 1, #parts do
+        local ID = 1
+        while var.recall("npf.n" .. ID) do
+          ID = ID + 1
+        end
+        var.store("npf.n" .. ID, parts[x])
+        table.insert(partNames, "npf.n" .. ID)
+      end
+      table.insert(partNames, 1, fileName)
+      var.store("npfh.n" .. Image.info.projectID, partNames)
+      Image.modified = false
+      
+      File:list()
+      if continue then
+        continue()
+      end
+    end
+    
+    if not projectID then -- New image, generate new header file
+      Image.imageStr = imageStr
+      local projectID = 1
+      
+      while var.recall("npfh.n" .. projectID)  do
+        projectID = projectID + 1
+      end
+      Image.info.projectID = projectID
+      getFileName(Image, save)
+    else
+      save()
+    end
+  end
+  
+  function File:newImage()
+    local function newImage(w, h)
+      local newImage = Image(w, h)
+      table.insert(Images, newImage)
+      Workspace.Image = newImage
+      Workspace:reset()
+      --Workspace:updateMenu()
+    end
+        
+    pixelDialog("New Image", newImage)
+  end
+
+  function File:exportToClipboard()
+    local Image = Workspace.Image
+    if not Image then
+      return 
+    end
+    local w = Image.info.size.width
+    local h = Image.info.size.height
+    
+    local text = [["]] .. Image:exportAsString(1, 1, w, h) .. [["]]
+    clipboard.addText(text)
+    gtk.showMessageBox("Task Complete", "The current image has been copied to the clipboard.")
+  end
+  
+  function File:imortClipboard()
+    local imgString = clipboard.getText()
+    if imgString and type(imgString) == "string" then
+      imgString = imgString:sub(2, -2)
+      local tempStr  = imgTools.convertChars(imgString)
+      local w, h     = imgTools.getSize(tempStr)
+      local newImage = Image(w, h)
+      
+      newImage.info.fileName = "Clipboard"
+      newImage.modified      = true
+      table.insert(Images, newImage)
+      Workspace.Image        = newImage
+
+      Workspace.Image:importString(imgString, 1, 1, "All Pixels", "Overwrite All")
+    else
+      return 
+    end
+
+  end
+  
+  function File:manage()
+    local headers = File.imageHeaders
+    local titles  = {}
+    
+    for x = 1, #headers do
+      local header = headers[x]
+      table.insert(titles, header.name)
+    end
+    
+    local dialog = Dialog("Manage Image Files", 
+      Position {
+        top = "10%", left = "10%"
+      },
+      Dimension("80%", "80%")
+    )
+    
+    local lstFiles = List {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      items = titles,
+      style = {
+        defaultHeight = 104,
+        defaultWidth = 150,
+        lineHeight = 15,
+        font = {
+          size = 9
+        }
+      }
+    }
+
+    lblTitle = Label {
+      position = Position {
+        top = "27px", left = "10px", alignment = {
+          { ref = lstFiles, side = Position.Sides.Right }
+        }
+      },
+      text = "Preview:"
+    }
+    
+    lblDimensions = Label {
+      position = Position {
+        top = "127px", left = "10px", alignment = {
+          { ref = lstFiles, side = Position.Sides.Right }
+        }
+      },
+      text = "",
+      center = true,
+      style = {
+        defaultWidth = 80,
+        font = {
+          size = 6
+        }
+      }
+    }
+    
+    function lstFiles:change(sel)
+      local header  = headers[sel]
+      local parts   = header.parts
+      local iconStr = {}
+      local imgHeight = "n/a"
+      local imgWidth = "n/a"
+
+      if Workspace.showPreviews then
+        local imgData = getImageData(parts)
+        dialog.icon   = imgData.icon
+        dialog.imgWidth = imgData.imgWidth
+        dialog.imgHeight = imgData.imgHeight
+        imgWidth = dialog.imgWidth
+        imgHeight = dialog.imgHeight
+      end
+
+      lblDimensions.text = "( " .. imgWidth .. " x " .. imgHeight .. " )"
+      
+      self.parent:invalidate()
+    end
+    
+    function dialog:draw(gc, x, y, width, height)
+      Dialog.draw(self, gc, x, y, width, height)
+      if Workspace.showPreviews then
+        gc:drawImage(dialog.icon, 195, 66)
+      end
+      gc:drawRect(195, 66, 80, 80)
+    end
+    
+    local butCopy = Button {
+      position = Position {
+        bottom = "3px", right = "33px"
+      },
+      text = "Copy",
+      auto = true,
+      style = {
+        defaultHeight = 25,
+        font = {
+          size = 9
+        }
+      }
+    }
+    function butCopy:onAction()
+      local currentData = Workspace.Image
+      local sel = lstFiles.selected
+      local header = headers[sel]
+      
+      local function cleanUp()
+        Workspace.Image  = nil
+        table.remove(Images)
+        Workspace.Image  = currentData
+        File:list()
+        headers = File.imageHeaders
+        titles  = {}
+    
+        for x = 1, #headers do
+          local header = headers[x]
+          table.insert(titles, header.name)
+        end
+        
+        lstFiles.items = titles
+        lstFiles:reset()
+        dialog:removeFocusFromChildAtIndex(4)
+        dialog:giveFocusToChildAtIndex(1)
+        collectgarbage()
+        gtk.RootScreen:invalidate()
+      end
+      
+      if not Workspace.showPreviews then
+        local parts   = header.parts
+        local imgData = getImageData(parts)
+        dialog.icon   = imgData.icon
+        dialog.imgWidth = imgData.imgWidth
+        dialog.imgHeight = imgData.imgHeight
+      end
+      
+      header.imgWidth  = dialog.imgWidth
+      header.imgHeight = dialog.imgHeight
+
+      File:loadImage(header)
+      File:saveAs(cleanUp)
+    end
+    
+    local butRename = Button {
+      position = Position {
+        bottom = "3px", right = "3px", alignment = {
+          {ref = butCopy, side = Position.Sides.Left }
+        }
+      },
+      text = "Rename",
+      auto = true,
+      style = {
+        defaultHeight = 25,
+        font = {
+          size = 9
+        }
+      }
+    }
+    function butRename:onAction()
+      local sel = lstFiles.selected
+      local header = headers[sel]
+
+      local renameDialog = Dialog("Rename file to...", 
+        Position {
+          top = "20%", left = "20%"
+        },
+        Dimension("60%", "84px")
+      )
+  
+      local lblName = Label {
+        position = Position {
+          bottom = "36px", left = "4px"
+        },
+        text = "Name: "
+      }
+      
+      local txtName = Input {
+        position = Position {
+          top = "0px", left = "0px", alignment = {
+            { ref = lblName, side = Position.Sides.Top },
+            { ref = lblName, side = Position.Sides.Right }
+          }
+        },
+        value = fileName,
+        style = {
+          defaultWidth = 140
+        }
+      }
+      
+      local butOK = Button {
+        position = Position {
+          bottom = "3px", left = "30%"
+        },
+        text = "OK",
+        auto = true
+      }
+      function butOK:onAction()
+        header.name = txtName.value
+        local projectID = header.projectID
+        local data = deepcopy(header.parts)
+        table.insert(data, 1, header.name)
+        var.store("npfh.n" .. projectID, data)
+
+        File:list()
+        headers = File.imageHeaders
+        titles  = {}
+    
+        for x = 1, #headers do
+          local header = headers[x]
+          table.insert(titles, header.name)
+        end
+        
+        lstFiles.items = titles
+        lstFiles:reset()
+        dialog:removeFocusFromChildAtIndex(5)
+        dialog:giveFocusToChildAtIndex(1)
+        collectgarbage()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+  
+      local butCancel = Button {
+        position = Position {
+          bottom = "3px", right = "25%"
+        },
+        text = "Cancel",
+        auto = true
+      }
+      function butCancel:onAction()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+        
+      renameDialog.defaultFocus = 2
+      renameDialog:addChildren(lblName, txtName, butOK, butCancel, lblDimension, lblDimensionData)
+      gtk.RootScreen:pushScreen(renameDialog)
+      gtk.RootScreen:invalidate()
+    end
+    
+    local butDelete = Button {
+      position = Position {
+        bottom = "3px", right = "3px", alignment = {
+          {ref = butRename, side = Position.Sides.Left }
+        }
+      },
+      text = "Delete",
+      auto = true,
+      style = {
+        defaultHeight = 25,
+        font = {
+          size = 9
+        }
+      }
+    }
+    function butDelete:onAction()
+      local sel = lstFiles.selected
+      local header = headers[sel]
+      
+      local function delete()
+        File:delete(header.projectID)
+        File:list()
+        headers = File.imageHeaders
+        titles  = {}
+    
+        for x = 1, #headers do
+          local header = headers[x]
+          table.insert(titles, header.name)
+        end
+        
+        lstFiles.items = titles
+        lstFiles:reset()
+        collectgarbage()
+        dialog:removeFocusFromChildAtIndex(6)
+        dialog:giveFocusToChildAtIndex(1)
+        gtk.RootScreen:invalidate()
+      end
+      
+      gtk.showConfirmationBox("DELETE FILE", "Are you sure you want to delete: '" .. header.name .. "'?", delete)
+    end
+    
+    local butCancel = Button {
+      position = Position {
+        bottom = "3px", right = "3px", alignment = {
+          { ref = butDelete, side = Position.Sides.Left }
+        }
+      },
+      text = "Cancel",
+      auto = true,
+      style = {
+        defaultHeight = 25,
+        font = {
+          size = 9
+        }
+      }
+    }
+    function butCancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+
+    dialog:addChildren(lstFiles, lblTitle, lblDimensions, butCopy, butRename, butDelete, butCancel)
+    dialog.defaultFocus = 1
+    gtk.RootScreen:pushScreen(dialog)
+    lstFiles:change(1)
+    gtk.RootScreen:invalidate()
+    
+  end
+  
+  function File:delete(projectID)
+    local varName = "npfh.n" .. projectID
+    local parts   = var.recall(varName)
+    
+    if parts then
+      for x = 2, #parts do
+        local partName = parts[x]
+        math.eval("DelVar " .. partName)
+      end
+    end
+    math.eval("DelVar " .. varName)
+  end
+end
+
+----------------
+-- Tool class --
+----------------
+local Tool = class()
+do
+  
+  function Tool:init(args)
+    local args = args or {}
+    self.icon     = args.icon
+    self.titleStr = args.titleStr or "New Tool"
+    self.helpStr  = args.helpStr or "New Tool Help"
+    self.preview  = args.preview or false 
+    self.action   = args.action or function (args) end
+  end
+  
+end
+
+--------------------
+-- ToolBox Object --
+--    and Tools   --
+--------------------
+do
+  -- Drawing utilities for actions:
+  local function setPixel(x, y, Image, color)
+    local imgTable  = Image.pixels
+    local imgWidth  = Image.info.size.width
+    local imgHeight = Image.info.size.height
+
+    if x >= 1 and x <= imgWidth and y >= 1 and y <= imgHeight then
+      if color then
+        imgTable[x][y] = reduceColor(color)
+      else
+        imgTable[x][y] = false
+      end
+    end
+  end
+
+  local function getGradient(color1, color2, steps)
+    local color1  = { unpack(color1) }
+    local color2  = color2 and { unpack(color2) } or { unpack(color1) }
+    local r1, g1, b1 = unpack(color1)
+    local r2, g2, b2 = unpack(color2)
+    
+    local rChange = round((r2 - r1)/steps)
+    local gChange = round((g2 - g1)/steps)
+    local bChange = round((b2 - b1)/steps)
+
+    local r, g, b
+    local gradientColors = { }
+    for x = 0, steps do
+      r = r1 + x * rChange
+      if r < 0 then
+        r = 0
+      end
+      if r > 255 then
+        r = 0
+      end
+      g = g1 + x * gChange
+      if g < 0 then
+        g = 0
+      end
+      if g > 255 then
+        g = 255
+      end
+      b = b1 + x * bChange
+      if b < 0 then
+        b = 0
+      end
+      if b > 255 then
+        b = 255
+      end
+      table.insert(gradientColors, { r, g, b })
+    end
+    return gradientColors
+  end
+
+  local function getSelectedPixels()
+        
+  end
+  
+  local function drawLine(x1, y1, x2, y2, Image, color, color2)
+    local reversed = false
+    if x1 > x2 then
+      x1, x2 = x2, x1
+      reversed = not reversed
+    end
+    if y1 > y2 then
+      y1, y2 = y2, y1
+      reversed = not reversed
+    end
+    local size = x2 - x1 > y2 - y1 and x2 - x1 or y2 - y1
+    local colors = getGradient(color, color2, size + 1)
+    
+    for i = 0, size do
+      color = colors[i + 1]
+      if reversed then
+        setPixel(x1 + (x2 - x1) - round(( i / size) * (x2 - x1)), y1 + round((i / size) * (y2 - y1)), Image, color)
+      else
+        setPixel(x1 + round((i / size) * (x2 - x1)), y1 + round((i / size) * (y2 - y1)), Image, color)
+      end
+    end
+  end
+
+  local function drawCircle(x1, y1, x2, y2, Image, color)
+    local rayon = math.floor(math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)) + 0.01)
+    local x, y, m
+    x = 0
+    y = rayon
+    m = 5 - 4 * rayon
+    while x <= y do
+      setPixel(x + x1, y + y1, Image, color)
+      setPixel(y + x1, x + y1, Image, color)
+      setPixel(-x + x1, y + y1, Image, color)
+      setPixel(-y + x1, x + y1, Image, color)
+      setPixel(x + x1, -y + y1, Image, color)
+      setPixel(y + x1, -x + y1, Image, color)
+      setPixel(-x + x1, -y + y1, Image, color)
+      setPixel(-y + x1, -x + y1, Image, color)
+      if m > 0 then
+        y = y - 1
+        m = m - 8 * y
+      end
+      x = x + 1
+      m = m + 8 * x + 4
+    end
+  end
+  
+  local function drawRect(x1, y1, x2, y2, Image, color)
+    if x1 > x2 then
+      x1, x2 = x2, x1
+    end
+    if y1 > y2 then
+      y1, y2 = y2, y1
+    end
+    for i = x1, x2 do
+      setPixel(i, y1, Image, color)
+      setPixel(i, y2, Image, color)
+    end
+    for i = y1, y2 do
+      setPixel(x1, i, Image, color)
+      setPixel(x2, i, Image, color)
+    end
+  end
+  
+  local function fillRect(x1, y1, x2, y2, Image, color)
+    if x1 > x2 then
+      x1, x2 = x2, x1
+    end
+    if y1 > y2 then
+      y1, y2 = y2, y1
+    end
+    for i = x1, x2 do
+      for j = y1, y2 do
+        setPixel(i, j, Image, color)
+      end
+    end
+  end
+  
+  local function fillCircle(x1, y1, x2, y2, Image, color)
+    local rayon = math.floor(math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)) + 0.5)
+    local startX, endX, startY, endY
+    startX = x1 - rayon
+    endX = x1 + rayon
+    startY = y1 - rayon
+    endY = y1 + rayon
+    for i = startX, endX do
+      for j = startY, endY do
+        if (x1 - i) * (x1 - i) + (y1 - j) * (y1 - j) - (rayon + 1) / 2 <= rayon * rayon then
+          setPixel(i, j, Image, color)
+        end
+      end
+    end
+  end
+
+  function gradientFill(direction)
+    local shape    = Workspace.selectionShape
+    local color1   = Workspace.color
+    local color2   = Workspace.color2
+    local steps    = 0
+    local x1, y1   = unpack(Workspace.step1)
+    local x2, y2   = unpack(Workspace.cursor)
+    local Image    = Workspace.Image
+    local mode     = Workspace.pasteMode
+    local imgTable = Image.pixels
+
+    if not color2 then
+      gtk.showColorDialog("Select Color", {255, 255, 255}, function (c) Workspace.color2 = c end)
+      return 
+    end
+    
+    if shape == "Rectangle" then
+      x1, x2 = math.min(x1, x2), math.max(x1, x2)
+      y1, y2 = math.min(y1, y2), math.max(y1, y2)
+      
+      if direction == 1 then
+        steps = x2 - x1 + 1
+      else
+        steps = y2 - y1 + 1
+      end
+      
+      local colors = getGradient(color1, color2, steps)
+      local colorStep = 1
+      
+      for i = x1, x2 do
+        for j = y1, y2 do
+          if mode == "Overwrite All" or (mode == "On Colored Pixels" and imgTable[i][j]) or (not imgTable[i][j] and mode == "On Empty Pixels") then 
+            setPixel(i, j, Image, colors[colorStep])
+          end
+
+          if direction == 2 then
+            colorStep = colorStep + 1
+            if colorStep > steps then
+              colorStep = 1
+            end
+          end
+        end
+        if direction == 1 then
+          colorStep = colorStep + 1
+        end
+      end
+    else
+      local rayon = math.floor(math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)) + 0.5)
+      local startX, endX, startY, endY
+      local colors = getGradient(color1, color2, rayon + 1)
+      local colorStep = 1
+      
+      startX = x1 - rayon
+      endX = x1 + rayon
+      startY = y1 - rayon
+      endY = y1 + rayon
+      for i = startX, endX do
+        for j = startY, endY do
+          if (x1 - i) * (x1 - i) + (y1 - j) * (y1 - j) - (rayon + 1) / 2 <= rayon * rayon then
+            if mode == "Overwrite All" or (mode == "On Colored Pixels" and imgTable[i][j]) or (not imgTable[i][j] and mode == "On Empty Pixels") then 
+              colorStep = math.floor(math.sqrt((i - x1) * (i - x1) + (j - y1) * (j - y1)) + 0.5)
+              setPixel(i, j, Image, colors[colorStep + 1])
+            end
+          end
+        end
+      end
+    end
+    
+    Workspace.Image.modified = true
+    Workspace.step1 = nil
+  end
+  
+  local function samePixels(px1, px2)
+    if not px1 or not px2 then
+        if not px1 and not px2 then
+          return true
+        else
+          return false
+        end
+      end
+      
+      if px1[1] == px2[1] and px1[2] == px2[2] and px1[3] == px2[3] then
+        return true
+      else
+        return false
+      end
+    end
+  
+    local function fillPixel(x, y, Image, color)
+      local imgTable  = Image.pixels
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      local previousPixel, xTest, yTest
+  
+      if imgTable[x][y] then
+        previousPixel = { unpack(imgTable[x][y]) }
+      else
+        previousPixel = false
+      end
+  
+      if not samePixels(previousPixel, color and reduceColor(color)) then
+        if color then
+          imgTable[x][y] = reduceColor(color)
+        else
+          imgTable[x][y] = false
+        end
+        
+        for i = 1, 4 do
+          xTest = math.floor(i / 2) - 1 + x
+          yTest = (i == 3 and 1 or 0) - (i == 2 and 1 or 0) + y
+          if xTest > 0 and xTest < imgWidth + 1 and yTest > 0 and yTest < imgHeight + 1 then
+            if samePixels(previousPixel, imgTable[xTest][yTest]) then
+              fillPixel(xTest, yTest, Image, color)
+            end
+          end
+        end
+      end
+    end
+    
+    local function selectionPreview(gc)
+      local shape = Workspace.selectionShape
+      local previews = {}
+      
+      previews.Circle    = ToolBox.Circle.preview
+      previews.Rectangle = ToolBox.Rectangle.preview
+      previews[shape](gc, Workspace)
+    end
+    
+    ToolBox.Move = Tool{
+      icon     = npsGraphics.Move,
+      titleStr = "Move/Scroll",
+      helpStr  = "Use the arrow keys to move/scroll around the image.",
+    }
+    
+    ToolBox.Pencil = Tool{
+      icon     = npsGraphics.Pencil,
+      titleStr = "Pencil/Draw",
+      helpStr  = "Draw pixel per pixel.  You can use enter or you can click.",
+      action   = function(args)
+        local imgTable = args.Image.pixels
+        local cursorX, cursorY = unpack(args.cursor)
+        local color = args.color
+  
+        args.Image.modified = true
+        imgTable[cursorX][cursorY] = reduceColor(color)
+      end
+    }
+    
+    ToolBox.PaintBrush = Tool{
+      icon     = npsGraphics.PaintBrush,
+      titleStr = "Paint Brush",
+      helpStr  = "Drag the mouse to paint a free-form line.  Press enter or click to toggle the brush up and down.",
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = args.color
+          local img   = args.Image
+          if (args.step1[1] == cursorX and args.step1[2] == cursorY) or not Workspace.brushDown then
+            return 
+          end
+          drawLine(step1[1], step1[2], cursorX, cursorY, img, color)
+          args.step1 = args.cursor
+          args.Image.modified = true
+        end
+      end
+    }
+  
+    ToolBox.Eraser = Tool{
+      icon     = npsGraphics.Eraser,
+      titleStr = "Eraser",
+      helpStr  = "Press enter to erase the pixel.  The pixel will then be transparent.",
+      
+      action = function (args)
+        local imgTable = args.Image.pixels
+        local cursorX, cursorY = unpack(args.cursor)
+  
+        args.Image.modified = true
+        imgTable[cursorX][cursorY] = false
+      end
+    }
+  
+    ToolBox.EraseArea = Tool{
+      icon     = npsGraphics.EraseArea,
+      titleStr = "Erase an Area",
+      helpStr  = "Press enter to erase the pixels of a color/area (like Fill).  The pixel will then be transparent.",
+      
+      action   = function(args)
+        local Image = args.Image
+        local cursorX, cursorY = unpack(args.cursor)
+        local color = false
+        
+        Image:addHistory()
+        
+        args.Image.modified = true
+        fillPixel(cursorX, cursorY, Image, color)
+      end
+    }
+  
+    ToolBox.Fill = Tool{
+      icon     = npsGraphics.Fill,
+      titleStr = "Fill",
+      helpStr  = "Fill a zone.  You can fill all the pixels with the same color.",
+      action   = function(args)
+        local Image = args.Image
+        local cursorX, cursorY = unpack(args.cursor)
+        local color = args.color
+        
+        Image:addHistory()
+        
+        args.Image.modified = true
+        fillPixel(cursorX, cursorY, Image, color)
+      end
+    }
+    
+    ToolBox.Sample = Tool{
+      icon     = npsGraphics.Sample,
+      titleStr = "Sample a Color",
+      helpStr  = "Select an area with the desired color and press enter.",
+      
+      action   = function (args)
+        local imgTable = args.Image.pixels
+        local cursorX, cursorY = unpack(args.cursor)
+        local color = imgTable[cursorX][cursorY]
+        
+        if color then
+          color = expandColor(color)
+          args.color = color
+        else
+          args.color = {255, 255, 255}
+        end
+      end
+    }
+    
+    ToolBox.Line = Tool{
+      icon     = npsGraphics.Line,
+      titleStr = "Line",
+      helpStr  = "Draw a line.  Select two points to connect them with a line.",
+      
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = args.color
+          local img   = args.Image
+          img:addHistory()
+          
+          drawLine(step1[1], step1[2], cursorX, cursorY, img, color)
+          args.step1 = nil
+          args.Image.modified = true
+        end
+      end,
+      
+      preview = function (gc, workspace)
+        local imgZoom = workspace.zoom
+        local step1   = workspace.step1
+        local cursorX, cursorY = unpack(workspace.cursor)
+        local xScroll, yScroll = unpack(workspace.scroll)
+        
+        gc:setColorRGB(255,255,255)
+        gc:drawLine((step1[1] - 0.6) * imgZoom + 30 - xScroll * imgZoom, (step1[2] - 0.6) * imgZoom + 30 - yScroll * imgZoom, (cursorX - 0.6) * imgZoom + 30 - xScroll * imgZoom, (cursorY - 0.6) * imgZoom + 30 - yScroll * imgZoom)
+        gc:setColorRGB(0,0,0)
+        gc:drawLine((step1[1] - 0.6) * imgZoom + 29 - xScroll * imgZoom, (step1[2] - 0.6) * imgZoom + 29 - yScroll * imgZoom, (cursorX - 0.6) * imgZoom + 29 - xScroll * imgZoom, (cursorY - 0.6) * imgZoom + 29 - yScroll * imgZoom)
+      end
+    }
+  
+    ToolBox.GradientLine = Tool{
+      icon     = npsGraphics.GradientLine,
+      titleStr = "Gradient Line",
+      helpStr  = "Draw a gradient line.  Select two points to connect them with a line.",
+      
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color  = args.color
+          local color2 = args.color2
+          local img    = args.Image
+          
+          if not color2 then
+            Workspace:selectSecondaryColor()
+            return 
+          end
+          
+          img:addHistory()
+          drawLine(step1[1], step1[2], cursorX, cursorY, img, color, color2)
+          args.step1 = nil
+          args.Image.modified = true
+        end
+      end,
+      
+      preview = function (gc, workspace)
+        local imgZoom = workspace.zoom
+        local step1   = workspace.step1
+        local cursorX, cursorY = unpack(workspace.cursor)
+        local xScroll, yScroll = unpack(workspace.scroll)
+        
+        gc:setColorRGB(255,255,255)
+        gc:drawLine((step1[1] - 0.6) * imgZoom + 30 - xScroll * imgZoom, (step1[2] - 0.6) * imgZoom + 30 - yScroll * imgZoom, (cursorX - 0.6) * imgZoom + 30 - xScroll * imgZoom, (cursorY - 0.6) * imgZoom + 30 - yScroll * imgZoom)
+        gc:setColorRGB(0,0,0)
+        gc:drawLine((step1[1] - 0.6) * imgZoom + 29 - xScroll * imgZoom, (step1[2] - 0.6) * imgZoom + 29 - yScroll * imgZoom, (cursorX - 0.6) * imgZoom + 29 - xScroll * imgZoom, (cursorY - 0.6) * imgZoom + 29 - yScroll * imgZoom)
+      end
+    }
+  
+    ToolBox.Circle = Tool{
+      icon     = npsGraphics.Circle,
+      titleStr = "Circle",
+      helpStr  = "Draw a circle.  First, select the center, then select another point to draw the circle.",
+      
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = args.color
+          local img   = args.Image
+          img:addHistory()
+          
+          drawCircle(step1[1], step1[2], cursorX, cursorY, img, color)
+          args.step1 = nil
+          args.Image.modified = true
+        end
+      end,
+  
+      preview = function (gc, workspace)
+        local imgZoom = workspace.zoom
+        local step1   = workspace.step1
+        local cursorX, cursorY = unpack(workspace.cursor)
+        local xScroll, yScroll = unpack(workspace.scroll)
+  
+        local rayon = math.sqrt((cursorX - step1[1]) * (cursorX - step1[1]) + (cursorY - step1[2]) * (cursorY - step1[2]))
+        local startX, startY, size
+  
+        startX, startY = (step1[1] - rayon - 0.6) * imgZoom + 30 - xScroll * imgZoom, (step1[2] - rayon - 0.6) * imgZoom + 30 - yScroll * imgZoom
+        size = 2 * rayon * imgZoom
+        gc:setColorRGB(255, 255, 255)
+        gc:drawArc(startX - 1, startY - 1, size, size, 0, 360)
+        gc:setColorRGB(0,0,0)
+        gc:drawArc(startX, startY, size, size, 0, 360)
+      end
+    }
+    
+    ToolBox.FilledCircle = Tool{
+      icon     = npsGraphics.FilledCircle,
+      titleStr = "Filled Circle",
+      helpStr  = "Draw a filled circle.  Works like the circle tool.",
+      
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = args.color
+          local img   = args.Image
+          img:addHistory()
+          
+          fillCircle(step1[1], step1[2], cursorX, cursorY, img, color)
+          args.step1 = nil
+          args.Image.modified = true
+        end
+      end,
+  
+      preview = ToolBox.Circle.preview
+    }
+    
+    ToolBox.Rectangle = Tool{
+      icon     = npsGraphics.Rectangle,
+      titleStr = "Rectangle",
+      helpStr  = "Draw a rectangle.  Select the top left corner, then the bottom right corner.",
+  
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = args.color
+          local img   = args.Image
+          img:addHistory()
+          
+          drawRect(step1[1], step1[2], cursorX, cursorY, img, color)
+          args.step1 = nil
+          args.Image.modified = true
+        end
+      end,
+      
+      preview = function (gc, workspace)
+        local imgZoom = workspace.zoom
+        local step1   = workspace.step1
+        local cursorX, cursorY = unpack(workspace.cursor)
+        local xScroll, yScroll = unpack(workspace.scroll)
+  
+        local startX, startY, sizeX, sizeY, lowerY, higherY
+        lowerX, lowerY = cursorX < step1[1] and cursorX or step1[1], cursorY < step1[2] and cursorY or step1[2]
+        startX, startY = (lowerX - 0.6) * imgZoom + 30 - xScroll * imgZoom, (lowerY - 0.6) * imgZoom + 30 - yScroll * imgZoom
+        sizeX, sizeY = math.abs((cursorX - step1[1]) * imgZoom), math.abs((cursorY - step1[2]) * imgZoom)
+        gc:setColorRGB(255, 255, 255)
+        gc:drawRect(startX - 1, startY - 1, sizeX, sizeY)
+        gc:setColorRGB(0, 0, 0)
+        gc:drawRect(startX ,startY, sizeX, sizeY)
+      end
+    }
+    
+    ToolBox.FilledRectangle = Tool{
+      icon     = npsGraphics.FilledRectangle,
+      titleStr = "Filled Rectangle",
+      helpStr  = "Filled/solid rectangle.  This tool works the same as the rectangle tool",
+      
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = args.color
+          local img   = args.Image
+          img:addHistory()
+          
+          fillRect(step1[1], step1[2], cursorX, cursorY, img, color)
+          args.step1 = nil
+          args.Image.modified = true
+        end
+      end,
+      
+      preview = ToolBox.Rectangle.preview
+    }
+  
+    ToolBox.GradientFillSelection = Tool{
+      icon     = npsGraphics.GradientFill,
+      titleStr = "Gradient Fill Selection",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local step1 = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        
+        if not step1 then
+          Workspace.step1 = { cursorX, cursorY }
+        else
+          local color = Workspace.color
+          local img   = Workspace.Image
+          img:addHistory()
+          img.modified = true
+  
+          if Workspace.selectionShape == "Rectangle" then
+            gtk.showListBox("Gradient Direction", { "Horizontal", "Vertical" }, gradientFill)
+          else
+            gradientFill()
+          end
+        end
+      end,
+      
+      preview = selectionPreview
+        
+    }
+  
+    ToolBox.EraseSelection = Tool{
+      icon     = npsGraphics.EraseSelection,
+      titleStr = "Erase Selection",
+      helpStr  = "Someday.",
+      
+      action   = function (args)
+        local step1 = args.step1
+        local cursorX, cursorY = unpack(args.cursor)
+        
+        if not step1 then
+          args.step1 = args.cursor
+        else
+          local color = false
+          local img   = args.Image
+          img:addHistory()
+          img.modified = true
+          
+          if Workspace.selectionShape == "Rectangle" then
+            fillRect(step1[1], step1[2], cursorX, cursorY, img, color)
+          else
+            fillCircle(step1[1], step1[2], cursorX, cursorY, img, color)
+          end
+          args.step1 = nil
+        end
+      end,
+      
+      preview = selectionPreview
+        
+    }
+  
+    ToolBox.FlipHSelection = Tool{
+      icon     = npsGraphics.FlipHSelection,
+      titleStr = "Horizontally Flip Selection",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local Image = Workspace.Image
+        if Workspace.step1 then
+          local x1, y1 = unpack(Workspace.step1)
+          local x2, y2 = unpack(Workspace.cursor)
+          Image:flipH(x1, y1, x2, y2)
+          Workspace.step1 = nil
+        else
+          Workspace.step1 = { unpack(Workspace.cursor) }
+        end
+      end,
+      
+      preview = function (gc)
+        Workspace.selectionShape = "Rectangle"
+        selectionPreview(gc)
+      end
+    }
+  
+    ToolBox.FlipVSelection = Tool{
+      icon     = npsGraphics.FlipVSelection,
+      titleStr = "Vertically Flip Selection",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local Image = Workspace.Image
+        if Workspace.step1 then
+          local x1, y1 = unpack(Workspace.step1)
+          local x2, y2 = unpack(Workspace.cursor)
+          Image:flipV(x1, y1, x2, y2)
+          Workspace.step1 = nil
+        else
+          Workspace.step1 = { unpack(Workspace.cursor) }
+        end
+      end,
+      
+      preview = function (gc)
+        Workspace.selectionShape = "Rectangle"
+        selectionPreview(gc)
+      end
+    }
+  
+    ToolBox.CropImage = Tool{
+      icon     = npsGraphics.Crop,
+      titleStr = "Crop Image",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local Image = Workspace.Image
+        if Workspace.step1 then
+          local x1, y1 = unpack(Workspace.step1)
+          local x2, y2 = unpack(Workspace.cursor)
+          local imgTable = Workspace.Image.pixels
+          
+          x1, x2 = math.min(x1, x2), math.max(x1, x2)
+          y1, y2 = math.min(y1, y2), math.max(y1, y2)
+          
+          local newWidth = x2 - x1 + 1
+          local newHeight = y2 - y1 + 1
+          local newImg = {}
+          
+          Workspace.Image:addHistory()
+          Workspace.Image.modified = true
+          Workspace.step1 = nil
+          
+          for i = 1, newWidth do
+            newImg[i] = {}
+            for j = 1, newHeight do
+              if imgTable[x1 + i -1][y1 + j - 1] then
+                newImg[i][j] = { unpack(imgTable[x1 + i -1][y1 + j - 1]) }
+              else
+                newImg[i][j] = false
+              end
+            end
+          end
+          Workspace.Image.pixels = newImg
+          Workspace.Image.info.size.width = newWidth
+          Workspace.Image.info.size.height = newHeight
+          Workspace.cursor = {1, 1}
+          Workspace.scroll = {0, 0}
+          Workspace:invalidate()
+        else
+          Workspace.step1 = { unpack(Workspace.cursor) }
+        end
+      end,
+      
+      preview = function (gc)
+        Workspace.selectionShape = "Rectangle"
+        selectionPreview(gc)
+      end
+    }
+  
+    ToolBox.CopySelection = Tool{
+      icon     = npsGraphics.CopySelection,
+      titleStr = "Copy Selection",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local step1 = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        
+        if not step1 then
+          Workspace.step1 = { cursorX, cursorY }
+        else
+          local color = Workspace.color
+          local img   = Workspace.Image
+          
+          if Workspace.selectionShape == "Rectangle" then
+            local x1, y1 = unpack(step1)
+            local x      = math.min(cursorX, x1)
+            local y      = math.min(cursorY, y1)
+            local width  = math.abs(x1 - cursorX) + 1
+            local height = math.abs(y1 - cursorY) + 1
+            local str    = img:exportAsString(x, y, width, height)
+  
+            clipboard.addText([["]] .. str .. [["]])
+            Workspace.step1 = nil
+          else
+            local x1, y1 = unpack(step1)
+            local x2, y2 = cursorX, cursorY
+            local rayon  = math.floor(math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)) + 0.5)
+            local startX, endX, startY, endY
+            local tempTbl = {}
+            local imgTable = img.pixels
+            
+            startX = x1 - rayon
+            endX = x1 + rayon
+            startY = y1 - rayon
+            endY = y1 + rayon
+            
+            local width = endX - startX + 1
+            local height = endY - startY + 1
+            
+            for i = 1, width do
+              tempTbl[i] = {}
+              for j = 1, height do
+                tempTbl[i][j] = false
+              end
+            end
+            
+            for i = startX, endX do
+              for j = startY, endY do
+                if (x1 - i) * (x1 - i) + (y1 - j) * (y1 - j) - (rayon + 1) / 2 <= rayon * rayon then
+                  if imgTable[i] then
+                    local color = imgTable[i][j] and { unpack(imgTable[i][j]) }
+                    tempTbl[i - startX + 1][j - startY + 1] = color  
+                  end
+                  
+                end
+              end
+            end
+            
+            local imgStr = imgTools.addSlashes(imgTools.generateHeader(width, height))
+            local pixelStrList = {}
+            
+            for i = 1, height  do
+              for j = 1, width do
+                table.insert(pixelStrList, imgTools.convertPixel(tempTbl[j][i]))
+              end
+            end
+            imgStr = imgStr .. table.concat(pixelStrList)
+            
+            clipboard.addText([["]] .. imgStr .. [["]])
+            Workspace.step1 = nil
+            
+          end
+        end
+      end,
+      
+      preview = selectionPreview
+        
+    }
+  
+    ToolBox.CutSelection = Tool{
+      icon     = npsGraphics.CutSelection,
+      titleStr = "Cut Selection",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local step1 = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        
+        if not step1 then
+          Workspace.step1 = { unpack(Workspace.cursor) }
+        else
+          local color = Workspace.color
+          local img   = Workspace.Image
+          img:addHistory()
+          img.modified = true
+          
+          ToolBox.CopySelection.action()
+          
+          if Workspace.selectionShape == "Rectangle" then
+            local x1, y1   = unpack(step1)
+            local x2, y2   = unpack(Workspace.cursor)
+            local imgTable = img.pixels
+            
+            x1, x2 = math.min(x1, x2), math.max(x1, x2)
+            y1, y2 = math.min(y1, y2), math.max(y1, y2)
+            
+            for i = x1, x2 do
+              for j = y1, y2 do
+                imgTable[i][j] = false
+              end
+            end
+          else
+            local x1, y1 = unpack(step1)
+            local x2, y2 = cursorX, cursorY
+            local rayon  = math.floor(math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)) + 0.5)
+            local startX, endX, startY, endY
+            local tempTbl = {}
+            local imgTable = img.pixels
+            
+            startX = x1 - rayon
+            endX = x1 + rayon
+            startY = y1 - rayon
+            endY = y1 + rayon
+            
+            for i = startX, endX do
+              for j = startY, endY do
+                if (x1 - i) * (x1 - i) + (y1 - j) * (y1 - j) - (rayon + 1) / 2 <= rayon * rayon then
+                  if imgTable[i] and imgTable[i][j] then
+                    imgTable[i][j] = false
+                  end
+                end
+              end
+            end
+          end
+        end
+        
+        Workspace:invalidate()
+      end,
+      
+      preview = selectionPreview
+        
+    }
+  
+    ToolBox.PasteSelection = Tool{
+      icon     = npsGraphics.PasteSelection,
+      titleStr = "Paste Selection",
+      helpStr  = "Someday.",
+      
+      action   = function ()
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        local step1 = Workspace.step1      
+        
+        if not step1 then
+          step1 = clipboard.getText()
+          if type(step1) ~= "string" or not string.find(step1, [[\016\000\001\000]]) then
+            Workspace.step1 = nil
+            return 
+          end
+          step1 = step1:sub(2, -2)
+          local iconStr  = [[temp = image.new("]] .. step1 .. [[")]] 
+          assert(loadstring(iconStr))()
+          Workspace.step1 = temp
+        else
+          step1 = clipboard.getText()
+          step1 = step1:sub(2, -2)
+          local sourceMode = Workspace.sourceMode
+          local pasteMode = Workspace.pasteMode
+          Workspace.Image:addHistory()
+          Workspace.Image:importString(step1, cursorX, cursorY, sourceMode, pasteMode)
+          Workspace.Image.modified = true
+          Workspace.step1 = nil
+        end
+        
+        Workspace:invalidate()
+      end,
+      
+      preview = function(gc)
+        local imgZoom = Workspace.zoom
+        local step1   = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        local xScroll, yScroll = unpack(Workspace.scroll)
+        local w = step1:width()
+        local h = step1:height()
+        
+        w = w * imgZoom
+        h = h * imgZoom
+        local imgPreview = step1:copy(w, h)
+        
+        gc:drawImage(imgPreview, (cursorX - 0.6) * imgZoom + 30 - xScroll * imgZoom, (cursorY - 0.6) * imgZoom + 30 - yScroll)
+  
+      end
+        
+    }
+  
+    ToolBox.ResizeSelection = Tool{
+      icon     = npsGraphics.ResizeSelection,
+      titleStr = "Resize Selection",
+      helpStr  = "...",
+  
+      action   = function ()
+        local step1 = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        
+        if not step1 then
+          Workspace.step1 = { cursorX, cursorY }
+        else
+          local img = Workspace.Image
+          local function resizeSelection(xF, yF)
+            img:resize(xF, yF, step1[1], step1[2], cursorX, cursorY)
+            Workspace.step1 = nil
+          end
+          resizeDialog(resizeSelection)
+        end
+      end,
+      
+      preview = function (gc)
+        ToolBox.Rectangle.preview(gc, Workspace)
+      end
+    }
+  
+    ToolBox.RotateClockwise = Tool{
+      icon     = npsGraphics.RotateC,
+      titleStr = "Rotate 90° Clockwise",
+      helpStr  = "...",
+  
+      action   = function ()
+        local step1 = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        
+        if not step1 then
+          Workspace.step1 = { cursorX, cursorY }
+        else
+          local img = Workspace.Image
+          img:rotateSelection(true, step1[1], step1[2], cursorX, cursorY)
+          Workspace.step1 = nil
+        end
+      end,
+      
+      preview = function (gc)
+        ToolBox.Rectangle.preview(gc, Workspace)
+      end
+    }
+  
+    ToolBox.RotateCounterclockwise = Tool{
+      icon     = npsGraphics.RotateCC,
+      titleStr = "Rotate 90° Clockwise",
+      helpStr  = "...",
+  
+      action   = function ()
+        local step1 = Workspace.step1
+        local cursorX, cursorY = unpack(Workspace.cursor)
+        
+        if not step1 then
+          Workspace.step1 = { cursorX, cursorY }
+        else
+          local img = Workspace.Image
+          img:rotateSelection(false, step1[1], step1[2], cursorX, cursorY)
+          Workspace.step1 = nil
+        end
+      end,
+      
+      preview = function (gc)
+        ToolBox.Rectangle.preview(gc, Workspace)
+      end
+    }
+  
+  end
+  
+  --------------------------
+  -- Filters Table/Object --
+  --------------------------
+  do
+    function Filters.invert()
+      local Image     = Workspace.Image
+      local imgTable  = Image.pixels
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      
+      Image:addHistory()
+      for i = 1, imgWidth do
+        for j = 1, imgHeight do
+          if imgTable[i][j] then
+            local previous = { unpack(imgTable[i][j]) }
+            imgTable[i][j] = {31 - previous[1], 31 - previous[2], 31 - previous[3]}
+          end
+        end
+      end
+      Workspace:invalidate()
+    end
+      
+    function Filters.replace()
+      local Image     = Workspace.Image
+      local tolerance = Workspace.tolerance
+      local imgTable  = Image.pixels
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      local color1    = { unpack(Workspace.color) }
+      
+      Image:addHistory()
+      local function replace(color2)
+        local color1 = reduceColor(color1)
+        local color2 = reduceColor(color2)
+        local r1, g1, b1 = unpack(color1)
+        local r2, g2, b2 = unpack(color2)
+        local abs = math.abs
+        
+        for i = 1, imgWidth do
+          for j = 1, imgHeight do
+            if tolerance == 0 then
+              if imgTable[i][j] and sameColor(imgTable[i][j], color1) then
+                imgTable[i][j] = { unpack(color2) } 
+              end
+            else
+              if imgTable[i][j] then
+                local r, g, b = unpack(imgTable[i][j])
+                r = r1 - r
+                g = g1 - g
+                b = b1 - b 
+                if abs(r) <= tolerance and abs(g) <= tolerance and abs(b) <= tolerance then
+                  r = r2 - r
+                  g = g2 - g
+                  b = b2 - b
+                  
+                  r = r < 0 and 0 or r
+                  r = r > 31 and 31 or r
+                  g = g < 0 and 0 or g
+                  g = g > 31 and 31 or g
+                  b = b < 0 and 0 or b
+                  b = b > 31 and 31 or b
+                  
+                  imgTable[i][j] = {r, g, b}
+                end
+              end
+            end
+          end
+        end
+        Workspace:invalidate()
+      end
+      gtk.showColorDialog("Replace Current Color", { unpack(color1) }, replace)
+  
+    end
+    
+    function Filters.alpha()
+      local Image     = Workspace.Image
+      local imgTable  = Image.pixels
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      local color1    = { unpack(Workspace.color) }
+      
+      Image:addHistory()
+      color1 = reduceColor(color1)
+      for i = 1, imgWidth do
+        for j = 1, imgHeight do
+          if imgTable[i][j] and sameColor(imgTable[i][j], color1) then
+            imgTable[i][j] = false
+          end
+        end
+      end
+      Workspace:invalidate()
+    end
+    
+    function Filters.increaseBrightness()
+      local Image     = Workspace.Image
+      local imgTable  = Image.pixels
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      
+      Image:addHistory()
+      for i = 1, imgWidth do
+        for j = 1, imgHeight do
+          if imgTable[i][j] then
+            imgTable[i][j][1] = imgTable[i][j][1] + 3 <= 31 and imgTable[i][j][1] + 3 or 31
+            imgTable[i][j][2] = imgTable[i][j][2] + 3 <= 31 and imgTable[i][j][2] + 3 or 31
+            imgTable[i][j][3] = imgTable[i][j][3] + 3 <= 31 and imgTable[i][j][3] + 3 or 31
+          end
+        end
+      end
+      Workspace:invalidate()
+    end
+    
+    function Filters.decreaseBrightness()
+      local Image     = Workspace.Image
+      local imgTable  = Image.pixels
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      
+      Image:addHistory()
+      for i = 1, imgWidth do
+        for j = 1, imgHeight do
+          if imgTable[i][j] then
+            imgTable[i][j][1] = imgTable[i][j][1] - 3>= 0 and imgTable[i][j][1] - 3 or 0
+            imgTable[i][j][2] = imgTable[i][j][2] - 3>= 0 and imgTable[i][j][2] - 3 or 0
+            imgTable[i][j][3] = imgTable[i][j][3] - 3>= 0 and imgTable[i][j][3] - 3 or 0
+          end
+        end
+      end
+      Workspace:invalidate()
+    end
+    
+  end
+  
+  ----------------------
+  -- Workspace View   --
+  ----------------------
+  do
+    -- Menu and menu functions:
+    local function menuShortcut(key)
+      local actions   = { 
+        p = { Tool = "Pencil" },
+        P = { Tool = "PaintBrush" },
+        e = { Tool = "Eraser" },
+        E = { Tool = "EraseArea" },
+        l = { Tool = "Line" },
+        L = { Tool = "GradientLine" },
+        c = { Tool = "Circle" },
+        C = { Tool = "FilledCircle" },
+        r = { Tool = "Rectangle" },
+        R = { Tool = "FilledRectangle" },
+        f = { Tool = "Fill" },
+        s = { Tool = "Sample" },
+        
+        Z = { Image = "undo" },
+        Y = { Image = "redo" },
+        
+        t      = { Workspace = "selectPrimaryColor" },
+        T      = { Workspace = "selectSecondaryColor" },
+        u      = { Workspace = "swapColors" },
+        plus   = { Workspace = "ZoomIn" },
+        minus  = { Workspace = "ZoomOut" },
+        times  = { Workspace = "brightenColor" },
+        divide = { Workspace = "darkenColor" },
+        w      = { Workspace = "switchImage" },
+        
+        N     = { File = "newImage" },
+        S     = { File = "saveImage" },
+        O     = { File = "openImageDialog" },
+        W     = { File = "closeFile" },
+        
+      }
+  
+      if key == "+" then
+        key = "plus"
+      elseif key == "-" then
+        key = "minus"
+      elseif key == "*" then
+        key = "times"
+      elseif key == "/" then
+        key = "divide"
+      end
+      
+      return actions[key]
+    end
+    
+    function Workspace:updateMenu()
+      
+      -- File menu items:
+      if #File.imageHeaders == 0 then
+        toolpalette.enable("File", "Open (Shift+O)", false)
+        toolpalette.enable("File", "File Manager", false)
+      else
+        toolpalette.enable("File", "Open (Shift+O)", true)
+        toolpalette.enable("File", "File Manager", true)
+      end
+      
+      local clipStr = clipboard.getText()
+      if not clipStr or type(clipStr) ~= "string" or not string.find(clipStr,[[\016\000\001\000]]) then
+        toolpalette.enable("File", "Import from Clipboard", false)
+      else
+        toolpalette.enable("File", "Import from Clipboard", true)
+      end
+      
+      -- Image dependant items:
+      local menuItems = { 
+        { 4, 5, 6, 8 },
+        { 2, 3, 4, 5, 6 },
+        { 2, 3, 4, 5, 6, 7 },
+        { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 },
+        { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 },
+        { 2, 3, 4, 5, 6, 7 },
+        {},
+        { 2, 3, 4, 5, 6 },
+        { 2, 3, 4 },
+      }
+      
+      if not Workspace.Image then
+        for m = 1, 9 do
+          for i = 1, #menuItems[m] do
+            toolpalette.enable(menu[m][1], menu[m][menuItems[m][i]][1], false)
+          end
+        end
+      else
+        for m = 1, 9 do
+          for i = 1, #menuItems[m] do
+            toolpalette.enable(menu[m][1], menu[m][menuItems[m][i]][1], true)
+          end
+        end
+      end
+    end
+  
+    function Workspace:onPushed()
+      self.Image  = false -- Links to Image object
+      self.Tool   = "Move" -- Current tool in use
+      self.zoom   = 1
+      self.step1  = false
+      self.selectionShape = "Rectangle" -- or "Circle"
+      self.sourceMode = "Colored Pixels" -- see drpSourceMode, below
+      self.pasteMode = "Overwrite All" -- see drpPasteMode, below
+      self.tolerance = 0
+      self.color  = { 0, 0, 0 }
+      self.showPreviews = true
+      
+      self.reset()
+    end
+    
+    function Workspace:reset()
+      Workspace.cursor = {1, 1}
+      Workspace.scroll = {0, 0}
+      
+      Workspace:updateMenu()
+    end
+  
+    function Workspace:resizeCanvas()
+      local w   = self.Image.info.size.width
+      local h   = self.Image.info.size.height
+          
+      local function resizeCanvas(newW, newH)
+        local new = Image(newW, newH)
+        local img = Workspace.Image.pixels
+        for i = 1, newW do
+          if i > w then
+            break
+          end
+          for j = 1, newH do
+            if j > h then
+              break
+            end
+            if img[i][j] then
+              new.pixels[i][j] = { unpack(img[i][j]) }
+            end
+          end
+        end
+        Workspace.Image:addHistory()
+        Workspace.Image.modified = true
+        Workspace.Image.pixels = new.pixels
+        Workspace.Image.info.size.width = newW
+        Workspace.Image.info.size.height = newH
+        Workspace:invalidate()
+        Workspace:reset()
+      end
+      
+      pixelDialog("Resize Canvas", resizeCanvas, w, h)
+    end
+    
+    function Workspace:resizeImage()
+      local function resizeImage(xFactor, yFactor)
+        Workspace.Image:resize(xFactor, yFactor)
+        Workspace:reset()
+      end
+      resizeDialog(resizeImage)
+    end
+    
+    function Workspace:switchImage()
+      local num = #Images
+      if num > 1 then
+        local index = 0
+        for x = 1, num do
+          if Images[x] == self.Image then
+            index = x
+            break
+          end
+        end
+        index = index + 1
+        if index > num then
+          index = 1
+        end
+        self.Image = Images[index]
+        self:invalidate()
+      end
+    end
+    
+    function Workspace:darkenColor()
+      local color = self.color
+      local r, g, b = unpack(color)
+      r = r - 30 < 0 and 0 or r - 30
+      g = g - 30 < 0 and 0 or g - 30
+      b = b - 30 < 0 and 0 or b - 30
+      self.color = { r, g, b}
+      self:invalidate()
+    end
+  
+    function Workspace:brightenColor()
+      local color = self.color
+      local r, g, b = unpack(color)
+      r = r + 30 > 255 and 255 or r + 30
+      g = g + 30 > 255 and 255 or g + 30
+      b = b + 30 > 255 and 255 or b + 30
+      self.color = { r, g, b}
+      self:invalidate()
+    end
+    
+    function Workspace:setTolerance()
+      local dialog = Dialog("Tolerance", Position {top = "30%", left = "37%"}, Dimension("25%", "60px"))
+      
+      local txtValue = Input {
+        position = Position {
+          top = "33px", left = "5px"
+        },
+        style = {
+          defaultWidth = 30
+        },
+        number = true,
+        value = Workspace.tolerance
+      }
+      
+      local butSet = Button {
+        position = Position {
+          top = "30px", right = "5px"
+        },
+        text = "Set",
+        auto = true
+      }
+      function butSet:onAction()
+        Workspace.tolerance = txtValue.value
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+      
+      dialog:addChildren(txtValue, butSet)
+      dialog.defaultFocus = 1
+      
+      gtk.RootScreen:pushScreen(dialog)
+      gtk.RootScreen:invalidate()
+    end
+  
+    function Workspace:setPreview()
+      local dialog = Dialog("Show/Hide Image Previews", Position {top = "30%", left = "22%"}, Dimension("55%", "84px"))
+      
+      local chkShow = Checkbox {
+        position = Position {
+          top = "33px", left = "5px"
+        },
+        text = "Show image previews?",
+        value = Workspace.showPreviews
+      }
+      
+      local butSet = Button {
+        position = Position {
+          bottom = "3px", right = "5px"
+        },
+        text = "Set",
+        auto = true
+      }
+      function butSet:onAction()
+        Workspace.showPreviews = chkShow.value
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+      
+      dialog:addChildren(chkShow, butSet)
+      dialog.defaultFocus = 1
+      
+      gtk.RootScreen:pushScreen(dialog)
+      gtk.RootScreen:invalidate()
+    end
+  
+    function Workspace:setSelectionType()
+      local dialog = Dialog("Selection Options",
+        Position { top = "18%", left = "20%" },
+        Dimension("60%","135px"))
+      
+      local lblShape = Label {
+        position = Position {
+          top = "30px", left = "6px"
+        },
+        text = "Shape: "
+      }
+      
+      local drpShape = Dropdown {
+        position = Position {
+          top = "0px", left = "2px", alignment = {
+            { ref = lblShape, side = Position.Sides.Top },
+            { ref = lblShape, side = Position.Sides.Right }
+          }
+        },
+        items = { "Rectangle", "Circle" },
+        style = {
+          defaultWidth = 130
+        }
+      }
+      
+      local drpSourceMode = Dropdown {
+        position = Position {
+          top = "3px", left = "0px", alignment = {
+            { ref = drpShape, side = Position.Sides.Bottom },
+            { ref = drpShape, side = Position.Sides.Left }
+          }
+        },
+        items = { "All Pixels", "Colored Pixels", "Empty Pixels" },
+        style = {
+          defaultWidth = 130
+        },
+        value = Workspace.sourceMode
+      }
+      
+      local lblSourceMode = Label {
+        position = Position {
+          top = "3px", left = "6px", alignment = {
+            { ref = drpShape, side = Position.Sides.Bottom },
+          }
+        },
+        text = "Source: "
+      }
+  
+      local drpPasteMode = Dropdown {
+        position = Position {
+          top = "3px", left = "0px", alignment = {
+            { ref = drpSourceMode, side = Position.Sides.Bottom },
+            { ref = drpSourceMode, side = Position.Sides.Left }
+          }
+        },
+        items = { "Overwrite All", "On Colored Pixels", "On Empty Pixels" },
+        style = {
+          defaultWidth = 130
+        },
+        value = Workspace.pasteMode
+      }
+      
+      local lblPasteMode = Label {
+        position = Position {
+          top = "3px", left = "6px", alignment = {
+            { ref = drpSourceMode, side = Position.Sides.Bottom },
+          }
+        },
+        text = "Paste: "
+      }
+  
+      local butOK = Button {
+        position = Position {
+          bottom = "3px", right = "28%"
+        },
+        text = "OK",
+        auto = true
+      }
+      function butOK:onAction()
+        Workspace.selectionShape = drpShape.value
+        Workspace.sourceMode = drpSourceMode.value
+        Workspace.pasteMode = drpPasteMode.value
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+  
+      local butCancel = Button {
+        position = Position {
+          bottom = "3px", left = "28%"
+        },
+        text = "Cancel",
+        auto = true
+      }
+      function butCancel:onAction()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+          
+      dialog.defaultFocus = 2
+      dialog:addChildren(lblShape, drpShape, drpSourceMode, lblSourceMode, drpPasteMode, lblPasteMode, butOK, butCancel)
+      gtk.RootScreen:pushScreen(dialog)
+      gtk.RootScreen:invalidate()
+      
+      
+    end
+    
+    function Workspace:adjustScroll()
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+      
+      local x, y = (cursorX - 1 - xScroll) * imgZoom + 29, (cursorY - 1 - yScroll) * imgZoom + 29
+      if x < 20 then
+        xScroll = cursorX + round(9 / imgZoom) - 1
+        xScroll = xScroll < 3 and 0 or xScroll
+      elseif x > 318 - imgZoom - 20 then
+        xScroll = cursorX - round(269 / imgZoom)
+      end
+      if y < 20 then
+        yScroll = cursorY + round(9 / imgZoom ) - 1
+        yScroll = yScroll < 3 and 0 or yScroll
+      elseif y > 212 - imgZoom - 20 then
+        yScroll = cursorY - round(163 / imgZoom)
+      end    
+  
+      self.scroll = { xScroll, yScroll }
+    end
+    
+    function Workspace:adjustCursor()
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+      local x, y = (cursorX - 1 - xScroll) * imgZoom + 29, (cursorY - 1 - yScroll) * imgZoom + 29
+  
+      if x < 20 then
+        cursorX = xScroll - round(9 / imgZoom) + 1
+      elseif x > 318 - imgZoom - 20 then
+        cursorX = xScroll + round(269 / imgZoom)
+      end
+      if y < 20 then
+        cursorY = yScroll - round(9 / imgZoom) + 1
+      elseif y > 212 - imgZoom - 20 then
+        cursorY = yScroll + round(163 / imgZoom)
+      end
+      self.cursor = {cursorX, cursorY}
+    end
+  
+    function Workspace:imageClick(x, y)
+      local imgTable         = self.Image.pixels
+      local imgWidth         = self.Image.info.size.width
+      local imgHeight        = self.Image.info.size.height
+      local tool             = self.Tool
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+  
+      if imgTable and tool ~= "Move" then
+        if x >= 30 - xScroll * imgZoom and y >= 30 - yScroll * imgZoom and x < 30 - xScroll * imgZoom + imgZoom * imgWidth and y < 30 - yScroll * imgZoom + imgZoom * imgHeight then
+          cursorX = math.floor((x - 30 + xScroll * imgZoom) / imgZoom) + 1
+          cursorY = math.floor((y - 30 + yScroll * imgZoom) / imgZoom) + 1
+          self.cursor = { cursorX, cursorY }
+          self:invalidate()
+        end
+      end
+    end
+    
+    -- Events:
+    function Workspace:copy()
+      if not self.Image then
+        return 
+      end
+      
+      self.Tool = "CopySelection"
+      self:invalidate()
+    end
+    
+    function Workspace:cut()
+      if not self.Image then
+        return 
+      end
+      
+      self.Tool = "CutSelection"
+      self:invalidate()
+    end
+    
+    function Workspace:paste()
+      if not self.Image then
+        return 
+      end
+      
+      self.Tool = "PasteSelection"
+      self:invalidate()
+    end
+    
+    function Workspace:mouseDown(x, y)
+      if not self.Image then
+        return 
+      end
+      
+      self:imageClick(x, y)
+    end
+  
+    function Workspace:enterKey()
+      if not self.Image then
+        return 
+      end
+      
+      local toolName = self.Tool
+      local tool     = ToolBox[toolName]
+      local imgTable = self.Image.pixels
+      
+      if imgTable then
+        tool.action(self)
+        self:invalidate()
+      end
+    end
+    
+    function Workspace:arrowUp()
+      if not self.Image then
+        return 
+      end
+      
+      local imgTable         = self.Image.pixels
+      local imgWidth         = self.Image.info.size.width
+      local imgHeight        = self.Image.info.size.height
+      local tool             = self.Tool
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+  
+      if imgTable then
+        if tool ~= "Move" then
+          if cursorY > 1 then
+            cursorY = cursorY - 1
+            self.cursor = { cursorX, cursorY }
+            self:adjustScroll()
+          end
+        elseif yScroll > 0 then 
+          yScroll = yScroll - 1
+          self.scroll = { xScroll, yScroll }
+          self:adjustCursor()
+        end
+      end
+      self:invalidate()
+    end
+  
+    function Workspace:arrowDown()
+      if not self.Image then
+        return 
+      end
+      
+      local imgTable         = self.Image.pixels
+      local imgWidth         = self.Image.info.size.width
+      local imgHeight        = self.Image.info.size.height
+      local tool             = self.Tool
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+  
+      if imgTable then
+        if tool ~= "Move" then
+          if cursorY < imgHeight then
+            cursorY = cursorY + 1
+            self.cursor = { cursorX, cursorY }
+            self:adjustScroll()
+          end
+        elseif (imgHeight - yScroll) * imgZoom > 163 then 
+          yScroll = yScroll + 1
+          self.scroll = { xScroll, yScroll }
+          self:adjustCursor()
+        end
+      end
+      self:invalidate()
+    end
+  
+    function Workspace:arrowRight()
+      if not self.Image then
+        return 
+      end
+      
+      local imgTable         = self.Image.pixels
+      local imgWidth         = self.Image.info.size.width
+      local imgHeight        = self.Image.info.size.height
+      local tool             = self.Tool
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+            
+      if imgTable then
+        if tool ~= "Move" then
+          if cursorX < imgWidth then
+            cursorX = cursorX + 1
+            self.cursor = { cursorX, cursorY }
+            self:adjustScroll()
+          end
+        elseif (imgWidth - xScroll) * imgZoom > 273 then 
+          xScroll = xScroll + 1
+          self.scroll = { xScroll, yScroll }
+          self:adjustCursor()
+        end
+      end
+  
+      self:invalidate()
+    end
+  
+    function Workspace:arrowLeft()
+      if not self.Image then
+        return 
+      end
+      
+      local imgTable         = self.Image.pixels
+      local imgWidth         = self.Image.info.size.width
+      local imgHeight        = self.Image.info.size.height
+      local tool             = self.Tool
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom          = self.zoom
+      
+      if imgTable then
+        if tool ~= "Move" then
+          if cursorX > 1 then
+            cursorX = cursorX - 1
+            self.cursor = { cursorX, cursorY }
+            self:adjustScroll()
+          end
+        elseif xScroll > 0 then 
+          xScroll = xScroll - 1
+          self.scroll = { xScroll, yScroll }
+          self:adjustCursor()
+        end
+      end
+      self:invalidate()
+    end
+  
+    function Workspace:escapeKey()
+      self.Tool = "Move"
+      self.step1 = false
+      self:invalidate()
+    end
+  
+    function Workspace:mouseMove(x, y)
+      if not self.Image then
+        return 
+      end
+      
+      if self.Tool and self.Tool == "PaintBrush" then
+        self:imageClick(x, y)
+        self:enterKey() 
+      end
+    end
+    
+    function Workspace:tabKey()
+      if not self.Image then
+        return 
+      end
+      
+      if self.Tool == "PaintBrush" then
+        self.brushDown = not self.brushDown
+        if self.brushDown then
+          self.step1 = self.cursor
+          cursor.show()
+        else
+          self.Image:addHistory()
+        end
+        self:invalidate()
+      end
+    end
+    
+    function Workspace:charIn(key)
+      key = key == "(" and " " or key --avoid patterns
+      if string.find("ZYNOSWw+-p*/PfeEstTucClLrR", key) then
+        local action = menuShortcut(key)
+        if action and action.Tool then
+          self.Tool = action.Tool
+          self.step1 = false
+          if action.Tool == "Pencil" then
+            self.Image:addHistory()
+          end
+          if action.Tool == "PaintBrush" then
+            self.brushDown = false
+            self.Image:addHistory()
+          end
+        elseif action and action.Workspace then
+          if action.Workspace == "ZoomIn" then
+            if self.zoom < 8 then
+              self.scroll = { 0, 0 }
+              self.zoom = self.zoom * 2
+            end
+          elseif action.Workspace == "ZoomOut" then
+            if self.zoom > 1 then
+              self.scroll = { 0, 0 }
+              self.zoom = self.zoom / 2
+            end
+          else 
+            Workspace[action.Workspace](self)
+          end
+          self:adjustScroll()
+        elseif action and action.File then
+          File[action.File]()
+        elseif action and action.Image then
+          self.Image[action.Image](self.Image)
+        end
+        self:invalidate()
+      elseif string.find("0123456789", key) then
+        key = tonumber(key)
+        self.color = self.Pallet[key]
+        self:invalidate()
+      end
+    end
+    
+    -- Drawing methods:  
+    function Workspace:drawImage(gc)
+      if not self.Image then
+        return 
+      end
+      local xMargin   = 30
+      local yMargin   = 30
+      local x, y      = unpack(self.scroll)
+      local zoom      = self.zoom
+      local Image     = self.Image
+      local imgWidth  = Image.info.size.width
+      local imgHeight = Image.info.size.height
+      local imgTable  = Image.pixels
+  
+      local xStart    = 1 + x
+      local xEnd      = round(280 / zoom) + xStart - 1
+      if xEnd > imgWidth then
+        xEnd = imgWidth
+      end
+  
+      local yStart    = 1 + y
+      local yEnd      = round(174 / zoom) + yStart - 1
+      if yEnd > imgHeight then
+        yEnd = imgHeight
+      end
+      
+      x = xMargin - x * zoom
+      y = yMargin - y * zoom
+  
+      gc:setColorRGB(0, 0, 0)
+      gc:setPen("thin", "dashed")
+      gc:drawRect(29, 29, (xEnd - xStart + 1) * zoom + 1, (yEnd - yStart + 1) * zoom + 1)
+      
+      gc:setColorRGB(200, 0, 200)
+      gc:setPen("medium", "dotted")
+      if xStart > 1 then
+        gc:drawLine(28, 29, 28, 28 + (yEnd - yStart + 1) * zoom + 1)
+      end
+      if xEnd < imgWidth then
+        gc:drawLine(30 + (xEnd - xStart + 1) * zoom + 1, 29, 30 + (xEnd - xStart + 1) * zoom + 1, 28 + (yEnd - yStart + 1) * zoom + 1)
+      end
+      if yStart > 1 then
+        gc:drawLine(29, 28, 30 + (xEnd - xStart + 1) * zoom + 1, 28)
+      end
+      if yEnd < imgHeight then
+        gc:drawLine(29, 30 + (yEnd - yStart + 1) * zoom + 1, 30 + (xEnd - xStart + 1) * zoom + 1, 30 + (yEnd - yStart + 1) * zoom + 1)
+      end
+      
+      gc:setPen("thin","smooth")
+      
+      for i = xStart, xEnd do
+        for j = yStart, yEnd do
+          if imgTable[i][j] then
+            local rgb = expandColor(imgTable[i][j])
+            gc:setColorRGB(unpack(rgb))
+            gc:fillRect((i - 1) * zoom + x, (j - 1) * zoom + y, zoom, zoom)
+          else
+            gc:setColorRGB(175, 175, 175)
+            for k = 0, zoom - 1 do
+              gc:fillRect((i - 1) * zoom + x + k, (j - 1) * zoom + y + k, 1, 1)
+            end
+          end
+        end
+      end  
+    end
+  
+    function Workspace:drawCursor(gc)
+      local tool = ToolBox[self.Tool]
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom = self.zoom
+      local imgTable = self.Image.pixels
+      
+      if imgTable and tool then      
+        local x, y = (cursorX - 1 - xScroll) * imgZoom + 29, (cursorY - 1 - yScroll) * imgZoom + 29
+        if tool ~= "Move" then
+          gc:setColorRGB(0, 0, 0)
+          gc:drawRect(x, y, imgZoom + 1, imgZoom + 1)
+          gc:setColorRGB(255, 255, 255)
+          gc:drawRect(x + 1, y + 1, imgZoom - 1, imgZoom - 1)
+        end
+      end
+    end
+    
+    function Workspace:drawTool(gc)
+      local Image = self.Image
+      local imgTable
+      if Image then
+        imgTable = self.Image.pixels
+      else
+        imgTable = false
+      end
+      
+      local tool = self.Tool
+      local cursorX, cursorY = unpack(self.cursor)
+      local xScroll, yScroll = unpack(self.scroll)
+      local imgZoom = self.zoom
+      local step1 = self.step1
+      local color = self.color
+      
+      if imgTable and tool then
+        if tool ~= "Move" then
+          self:drawCursor(gc)
+        end
+        
+        if step1 and ToolBox[tool].preview then
+          ToolBox[tool].preview(gc, self)
+          
+          if type(step1) == "table" then
+            local x, y = (step1[1] - 1) * imgZoom + 29 - xScroll * imgZoom, (step1[2] - 1) * imgZoom + 29 - yScroll * imgZoom
+            gc:setColorRGB(255, 255, 255)
+            gc:drawLine(x - 1, y, x + imgZoom - 1, y + imgZoom)
+            gc:drawLine(x + imgZoom - 1, y, x - 1, y + imgZoom)
+            gc:setColorRGB(0, 0, 0)
+            gc:drawLine(x, y ,x + imgZoom, y + imgZoom)
+            gc:drawLine(x + imgZoom, y, x, y + imgZoom)
+          end
+        end
+      end
+    end  
+  
+    function Workspace:drawInfoBar(gc)
+      local Image = self.Image
+      if not Image then
+        return 
+      end
+      local color       = self.color
+      local color2      = self.color2
+      local tool        = ToolBox[self.Tool]
+      local changedMark = (self.Image.modified and "*") or ""
+      local zoom        = self.zoom
+      local Image       = self.Image
+      local imgWidth    = Image.info.size.width
+      local imgHeight   = Image.info.size.height
+      local imgTable    = Image.pixels
+      local imgName     = Image.info.fileName
+      
+      gc:setColorRGB(0, 0, 0)
+      gc:fillRect(0, 0, 20, 32)
+      gc:setColorRGB(unpack(color))
+      gc:fillRect(1, 1, 18, 14)
+      if color2 then
+        gc:setColorRGB(unpack(color2))
+        gc:fillRect(1, 16, 18, 14)
+      else
+        gc:setColorRGB(255, 255, 255)
+        gc:fillRect(1, 16, 18, 14)
+        gc:setColorRGB(255, 0, 0)
+        gc:drawLine(1, 16, 19, 29)
+      end
+      gc:drawImage(tool.icon, 0, 30)
+      gc:setColorRGB(0, 0, 0)
+      gc:setFont("sansserif", "r", 10)
+      
+      if imgTable then
+        local str = changedMark .. imgName .. " - " .. tostring(imgWidth) .. "x" .. tostring(imgHeight) .. " (" .. tostring(zoom * 100) .. "%)"
+        gc:setColorRGB(255,255,255)
+        gc:drawString(str, 24, 0, "top")
+        gc:drawString(str, 26, 0, "top")
+        gc:drawString(str, 25, -1, "top")
+        gc:drawString(str, 25, 1, "top")
+        gc:setColorRGB(0, 0, 0)
+        gc:drawString(str, 25, 0, "top")
+        if self.Tool == "PaintBrush" then
+          if self.brushDown then
+            gc:setColorRGB(0, 0, 255)
+            gc:setFont("sansserif", "r", 6)
+            gc:drawString("Paint Brush is down", 50, 27)
+          end
+        end
+      end
+      
+      local colors = self.Pallet
+      gc:setFont("sansserif", "r", 6)
+      for x = 0, 9 do
+        gc:setColorRGB(unpack(colors[x]))
+        gc:fillRect(12, 55 + 14 * x, 10, 10)
+        gc:setColorRGB(0, 0, 0)
+        gc:drawRect(12, 55 + 14 * x, 10, 10)
+        gc:drawString(x .. " ", 2, 55 + 14 * x, "top")
+      end
+    end
+  
+    local brush   = npsGraphics.brush
+    local bunny   = npsGraphics.bunny
+    local bigred  = npsGraphics.bigred
+    
+    function Workspace:draw(gc)
+      View.draw(self, gc)
+      self:drawImage(gc)
+      self:drawTool(gc)
+      self:drawInfoBar(gc)
+      if not self.Image then
+        self:drawSplash(gc)
+      end
+    end
+    
+    function Workspace:drawSplash(gc)
+      gc:setColorRGB(0, 0, 0)
+      gc:fillRect(0, 0, 318, 212)
+      gc:setColorRGB(0, 0, 212)
+      gc:setFont("sansserif", "bi", 30)
+      gc:drawImage(bunny, 200, 44)
+      gc:drawXCenteredString("nPaintShop", 50)
+      gc:setColorRGB(212, 0, 0)
+      gc:drawXCenteredString("nPaintShop", 48)
+      gc:drawImage(brush, 53, 36)
+      gc:drawImage(bigred, 90, 110)
+      gc:setColorRGB(255, 255, 255)
+      gc:setFont("sansserif", "b", 12)
+      gc:drawString("v1.0", 210, 90, "top")
+      gc:setColorRGB(0, 0, 212)
+      gc:drawXCenteredString("© 2022 by J. Beaman", 190)
+    end
+    
+    -- Action methods:  
+    function Workspace:selectPrimaryColor()
+      local color = { unpack(self.color) }
+      local function changeColor(color)
+        self.color = color
+      end
+      
+      gtk.showColorDialog("Select Color", color, changeColor)
+    end
+    
+    function Workspace:selectSecondaryColor()
+      local color = { unpack(self.color2 or {255, 255, 255 }) }
+      local function changeColor(color)
+        self.color2 = color
+      end
+      
+      gtk.showColorDialog("Select Color", color, changeColor)
+    end
+    
+    function Workspace:swapColors()
+      if not self.color2 then
+        self.color2 = {255, 255, 255} 
+      end
+      self.color, self.color2 = self.color2, self.color
+    end
+  end
+  
+  
+  File:list()
+  Pallets:load()
+  Pallets:set(1) -- Default "Standard" pallet
+  Workspace:reset()
+  gtk.RootScreen:pushScreen(Workspace)
+  

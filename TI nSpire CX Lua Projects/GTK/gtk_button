@@ -1,0 +1,136 @@
+------------------- 
+-- Button widget -- 
+------------------- 
+
+do 
+  local Widget  = gtk.Widget 
+  local Widgets = gtk.Widgets 
+
+  do Widgets.Button = class(Widget) 
+    local Widget = gtk.Widget 
+    local Button = Widgets.Button 
+
+    Button.defaultStyle = { 
+      textColor       = {000,000,000}, 
+      backgroundColor = {248,252,248}, 
+      borderColor     = {136,136,136}, 
+      focusColor      = {040,148,184},
+      disabledColor   = {200,200,200}, 
+
+      defaultWidth  = 48, 
+      defaultHeight = 27, 
+      font = { 
+          serif="sansserif", 
+          style="r", 
+          size=10 
+        } 
+    } 
+
+    function Button:init(arg) 
+      self.text = arg.text or "" 
+
+      local style = arg.style or {} 
+      self:setStyle(style)
+      style = self.style
+
+      local dimension = Dimension(style.defaultWidth, style.defaultHeight) 
+
+      Widget.init(self, arg.position, dimension) 
+      
+      self.auto = arg.auto
+      self.pic = arg.pic
+      self.visible = true
+      
+      if self.pic and self.auto then
+        local pic = self.pic
+        local h = style.defaultHeight
+        local w = style.defaultWidth
+        pic = pic:copy(w, h)
+        self.pic = pic
+      end
+    end 
+
+    function Button:prepare(gc) 
+      local font = self.style.font 
+
+      gc:setFont(font.serif, font.style, font.size) 
+      if self.auto then
+        self.dimension.width = gc:getStringWidth(self.text) + 10 
+        self.dimension:invalidate() 
+      end
+      
+      self.position:invalidate() 
+    end 
+
+    function Button:draw(gc, x, y, width, height) 
+      if not self.visible then
+        return 
+      end
+      
+      if self.meDown then 
+        y = y + 1 
+      end 
+
+      local style = self.style 
+
+      gc:setColorRGB(unpackColor(style.backgroundColor)) 
+      gc:fillRect(x + 2, y + 2, width - 4, height - 4) 
+
+      if self.pic then
+        gc:drawImage(self.pic, x, y)
+      end
+      
+      gc:setColorRGB(unpackColor(style.textColor)) 
+      
+      if self.disabled then
+        gc:setColorRGB(unpack(style.disabledColor))
+      end
+      gc:drawString(self.text, x + 5, y + 3, "top") 
+
+      if self.hasFocus then 
+        gc:setColorRGB(unpackColor(style.focusColor)) 
+        gc:setPen("medium", "smooth") 
+      else 
+        gc:setColorRGB(unpackColor(style.borderColor)) 
+        gc:setPen("thin", "smooth") 
+      end 
+
+      gc:fillRect(x + 2, y, width - 4, 2) 
+      gc:fillRect(x + 2, y + height - 2, width - 4, 2) 
+      gc:fillRect(x, y + 2, 1, height - 4) 
+      gc:fillRect(x + 1, y + 1, 1, height - 2) 
+      gc:fillRect(x + width - 1, y + 2, 1, height - 4) 
+      gc:fillRect(x + width - 2, y + 1, 1, height - 2) 
+
+      if self.hasFocus then 
+        gc:setColorRGB(unpackColor(style.focusColor)) 
+      end 
+
+      gc:setPen("thin", "smooth") 
+    end 
+
+
+    function Button:doAction() 
+      self.parent:invalidate() 
+      CallEvent(self, "onAction") 
+    end 
+
+    function Button:onMouseDown() 
+      self.meDown = true 
+    end 
+
+    function Button:onMouseUp(x, y, onMe) 
+      self.meDown = false 
+
+      if onMe then 
+        self:doAction() 
+      end 
+    end 
+
+    function Button:enterKey() 
+      self:doAction() 
+    end 
+  end 
+
+end 
+

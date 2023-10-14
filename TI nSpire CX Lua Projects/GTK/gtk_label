@@ -1,0 +1,109 @@
+------------------ 
+-- Label widget -- 
+------------------ 
+
+do 
+  local Widget  = gtk.Widget 
+  local Widgets = gtk.Widgets 
+
+  do Widgets.Label = class(Widget) 
+    local Widget = gtk.Widget 
+    local Label = Widgets.Label 
+    
+    Label.canFocus = false
+    Label.ignoreFocus = true
+    
+    Label.defaultStyle = { 
+      textColor       = {000,000,000}, 
+      backgroundColor = false,
+      defaultWidth = 20, 
+      defaultHeight = 30, 
+
+      font = { 
+        serif="sansserif", 
+        style="r", 
+        size=10 
+      } 
+    } 
+
+    function Label.TextPart(gc, text, max) 
+      local out = "" 
+
+      local width = gc:getStringWidth(text) 
+
+      if width < max then 
+        return text 
+      else 
+        for i=1, #text do 
+          local part = text:usub(1, i) 
+          if gc:getStringWidth(part .. "..") > max then 
+            break 
+          end 
+          out = part 
+        end 
+
+        return out .. ".." 
+      end 
+    end 
+
+    function Label:init(arg) 
+      self.text = arg.text or "" 
+
+      local style = arg.style or {} 
+      self:setStyle(style)
+      style = self.style 
+      self.visible = true
+      self.color = arg.color
+      self.limit = arg.limit == true 
+      self.center = arg.center == true
+      
+      local dimension = Dimension(style.defaultWidth, style.defaultHeight) 
+
+      Widget.init(self, arg.position, dimension) 
+    end 
+
+    function Label:prepare(gc) 
+      local font = self.style.font 
+
+      if self.color then
+        return 
+      end
+
+      gc:setFont(font.serif, font.style, font.size) 
+
+      if not self.limit and not self.center then 
+        self.dimension.width = gc:getStringWidth(self.text) 
+        self.dimension.height = gc:getStringHeight(self.text) 
+
+        self.dimension:invalidate() 
+        self.position:invalidate() 
+      end 
+    end 
+
+    function Label:draw(gc, x, y, width, height) 
+      if not self.visible then
+        return 
+      end
+      if self.color then
+        gc:setColorRGB(unpack(self.color))
+        gc:fillRect(x, y, width, height)
+        gc:setColorRGB(0, 0, 0)
+        gc:drawRect(x, y, width, height)
+      end
+      
+      local style = self.style
+      
+      gc:setColorRGB(unpackColor(style.textColor)) 
+
+      local displayText = self.limit and Label.TextPart(gc, self.text, width) or self.text 
+
+      if self.center then
+        local w = gc:getStringWidth(displayText)
+        x = x + (width - w)/2
+      end
+      gc:drawString(displayText, x, y, "top") 
+    end 
+  end 
+
+end 
+

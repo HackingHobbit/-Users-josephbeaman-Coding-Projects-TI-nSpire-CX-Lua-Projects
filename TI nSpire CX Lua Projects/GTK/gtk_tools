@@ -1,0 +1,900 @@
+--------------------------------
+-- GTK Tools                  --
+-- (Can be loaded by itself,  --
+-- else is loaded by GTK_Base --
+--------------------------------
+
+if not gtk then  -- If GTK_Base is not loaded...
+  gtk = {}
+  gtk.tools = {}
+end
+
+-- Adds function to the string library
+function string.proper(s)
+  if not s or type(s) ~= "string" then
+    return false
+  end
+  s = string.lower(s)
+  local firstLetter = string.match(s, "%a")
+  local place = string.find(s, "%a")
+  return s:sub(1, place - 1) .. string.upper(firstLetter) .. s:sub(place + 1)
+end
+
+local function copyTable(t)
+  local t2 = {}
+  for k,v in pairs(t) do
+    t2[k] = v
+  end
+  return t2
+end
+gtk.tools.copyTable = copyTable
+
+local function deepcopy(t) -- This function recursively copies a table's contents, and ensures that metatables are preserved. That is, it will correctly clone a pure Lua object.
+  if type(t) ~= 'table' then return t end
+  local mt = getmetatable(t)
+  local res = {}
+  for k, v in pairs(t) do
+    if type(v) == 'table' then
+    v = deepcopy(v)
+    end
+  res[k] = v
+  end
+  setmetatable(res, mt)
+  return res
+end -- from http://snippets.luacode.org/snippets/Deep_copy_of_a_Lua_Table_2
+gtk.tools.deepcopy = deepcopy
+
+local function varDump(value, depth, key)
+  local linePrefix = ""
+  local spaces = ""
+  
+  if key ~= nil then
+    linePrefix = "[" .. key .. "] = "
+  end
+  
+  if depth == nil then
+    depth = 0
+  else
+    depth = depth + 1
+    for i = 1, depth do
+      spaces = spaces .. " "
+    end
+  end
+  
+  if type(value) == "table" then
+    mTable = getmetatable(value)
+    if mTable == nil then
+      print(spaces .. linePrefix .. "(table) ")
+    else 
+      print(spaces .. "(metatable) ")
+      value = mTable
+    end
+    for tableKey, tableValue in pairs(value) do
+      varDump(tableValue, depth, tableKey)
+    end
+  elseif type(value) == "function"
+    or type(value) == "thread"
+    or type(value) == "userdata"
+    or value == nil then
+    print(spaces .. tostring(value))
+  else
+    print(spaces .. linePrefix .. "(" .. type(value) .. ") " .. tostring(value))
+  end
+end
+gtk.tools.varDump = varDump
+
+--------------------------------------------
+-- These functions were copied from EEPRO --
+--------------------------------------------
+
+local function GCdrawPoint(gc, x, y)
+  gc:fillRect(x, y, 1, 1)
+end
+
+local function GCdrawCircle(gc, x, y, diameter)
+  gc:drawArc(x - diameter / 2, y - diameter / 2, diameter, diameter, 0, 360)
+end
+
+local function GCdrawCenteredString(gc, str)
+  gc:drawString(str, .5*(318 - gc:getStringWidth(str)), .5 * 212, "middle")
+end
+
+local function GCdrawXCenteredString(gc, str, y)
+  gc:drawString(str, .5*(318 - gc:getStringWidth(str)), y, "top")
+end
+
+local function GCverticalBar(gc, x)
+  gc:fillRect(gc, x, 0, 1, 212)
+end
+
+local function GChorizontalBar(gc, y)
+  gc:fillRect(gc, 0, y, 318, 1)
+end
+
+local function GCdrawSquare(gc, x, y, l)
+  gc:drawPolyLine(gc,{(x - l / 2), (y - l / 2), (x + l / 2), (y - l / 2), (x + l / 2), (y + l / 2), (x - l / 2) ,(y + l / 2), (x - l / 2), (y - l / 2)})
+end
+
+local function GCdrawRoundRect(gc, x, y, wd, ht, rd)  -- wd = width, ht = height, rd = radius of the rounded corner
+  x = x - wd / 2  -- let the center of the square be the origin (x coord)
+  y = y - ht / 2 -- same for y coord
+  if rd > ht / 2 then rd = ht / 2 end -- avoid drawing cool but unexpected shapes. This will draw a circle (max rd)
+  gc:drawLine(x + rd, y, x + wd - (rd), y);
+  gc:drawArc(x + wd - (rd * 2), y + ht - (rd * 2), rd * 2, rd * 2, 270, 90);
+  gc:drawLine(x + wd, y + rd, x + wd, y + ht - (rd));
+  gc:drawArc(x + wd - (rd * 2), y, rd * 2, rd * 2, 0, 90);
+  gc:drawLine(x + wd - (rd), y + ht, x + rd, y + ht);
+  gc:drawArc(x, y, rd * 2, rd * 2, 90, 90);
+  gc:drawLine(x, y + ht - (rd), x, y + rd);
+  gc:drawArc(x, y + ht - (rd * 2), rd * 2, rd * 2, 180, 90);
+end
+
+local function GCfillRoundRect(gc, x, y, wd, ht, radius)  -- wd = width and ht = height 
+  if radius > ht / 2 then radius = ht / 2 end -- avoid drawing cool but unexpected shapes. This will draw a circle (max radius)
+  gc:fillPolygon({(x - wd / 2), (y - ht / 2 + radius), (x + wd / 2), (y - ht / 2 + radius), (x + wd / 2),(y + ht / 2 - radius), (x - wd / 2), (y + ht / 2 - radius), (x - wd / 2), (y - ht / 2 + radius)})
+  gc:fillPolygon({(x-wd/2-radius+1),(y-ht/2), (x+wd/2-radius+1),(y-ht/2), (x+wd/2-radius+1),(y+ht/2), (x-wd/2+radius),(y+ht/2), (x-wd/2+radius),(y-ht/2)})
+  x = x - wd / 2  -- let the center of the square be the origin (x coord)
+  y = y - ht / 2 -- same
+  gc:fillArc(x + wd - (radius * 2), y + ht - (radius*2), radius*2, radius*2, 1, -91);
+  gc:fillArc(x + wd - (radius * 2), y, radius * 2, radius * 2, -2, 91);
+  gc:fillArc(x, y, radius*2, radius * 2, 85, 95);
+  gc:fillArc(x, y + ht - (radius * 2), radius * 2, radius * 2, 180, 95);
+end
+
+local function textLim(gc, text, max)
+  local ttext, out = "",""
+  local width    = gc:getStringWidth(text)
+  if width<max then
+    return text, width
+  else
+    for i=1, #text do
+      ttext    = text:usub(1, i)
+      if gc:getStringWidth(ttext .. "..")>max then
+        break
+      end
+      out = ttext
+    end
+    return out .. "..", gc:getStringWidth(out .. "..")
+  end
+end
+
+---------------------------------------------- 
+-- Replacement for graphicalContex:clipRect -- 
+---------------------------------------------- 
+
+local clipRectData  = {} 
+local clipRects = 0 
+
+local gc_clipRect = function (gc, what, x, y, w, h) 
+
+  if what == "set"  then 
+    clipRects = clipRects + 1 
+    clipRectData[clipRects] = {x, y, w, h} 
+--[[
+  elseif what == "subset" and clipRects > 0 then 
+    local old  = clipRectData[clipRects] 
+
+    x   = old[1] < x and x or old[1] 
+    y   = old[2] < y and y or old[2] 
+    h   = old[2] + old[4] > y + h and h or old[2] + old[4] - y 
+    w   = old[1] + old[3] > x + w and w or old[1] + old[3] - x
+   
+    what = "set" 
+
+    clipRects = clipRects + 1 
+    clipRectData[clipRects] = {x, y, w, h} 
+
+]]--
+  elseif what == "subset" and clipRects > 0 then 
+    local old  = clipRectData[clipRects] 
+    local x1, x2 = x, old[1]
+    local y1, y2 = y, old[2]
+    local w1, w2 = w, old[3]
+    local h1, h2 = h, old[4]
+    
+    x   = math.max(x1, x2)
+    y   = math.max(y1, y2)
+    w   = math.min(x1 + w1, x2 + w2) - x
+    h   = math.min(y1 + h1, y2 + h2) - y
+    
+    what = "set" 
+
+    clipRects = clipRects + 1 
+    clipRectData[clipRects] = {x, y, w, h}
+  
+  elseif what == "restore" and clipRects > 0 then 
+    what = "set" 
+
+    clipRectData[clipRects] = nil 
+    clipRects = clipRects - 1 
+
+    local old  = clipRectData[clipRects] 
+    x, y, w, h = old[1], old[2], old[3], old[4] 
+
+  elseif what == "restore" then 
+    what = "reset" 
+  
+  elseif what == "subset" then
+    what = "set"
+    clipRects = clipRects + 1 
+    clipRectData[clipRects] = {x, y, w, h} 
+  end 
+
+  gc:clipRect(what, x, y, w, h) 
+end 
+
+-------------------------------------- 
+-- platform.withGC for apiLevel < 2 -- 
+-------------------------------------- 
+
+if not platform.withGC then 
+  platform.withGC = function (f, ...) 
+    local gc = platform.gc() 
+    gc:begin() 
+    local args = {...} 
+    args[#args+1] = gc 
+    local results = { f(unpack(args)) } 
+    gc:finish() 
+    return unpack(results) 
+  end 
+end 
+
+--------------------------------- 
+-- Patch the Graphical Context -- 
+--------------------------------- 
+
+local addToGC = function (name, func) 
+  local gcMeta = platform.withGC(getmetatable) 
+  gcMeta[name] = func 
+end 
+
+------------------------ 
+-- Apply some patches -- 
+------------------------ 
+
+addToGC("smartClipRect", gc_clipRect) 
+addToGC("drawPoint", GCdrawPoint)
+addToGC("drawCircle", GCdrawCircle)
+addToGC("drawCenteredString", GCdrawCenteredString)
+addToGC("drawXCenteredString", GCdrawXCenteredString)
+addToGC("verticalBar", GCverticalBar)
+addToGC("horizontalBar", GChorizontalBar)
+addToGC("drawSquare", GCdrawSquare)
+addToGC("drawRoundRect", GCdrawRoundRect)
+addToGC("fillRoundRect", GCfillRoundRect)
+addToGC("textLimit", textLim)
+
+-------------------------------
+-- Graphics Tools Without GC --
+-------------------------------
+
+local function getTextHeight(text, font) -- font is a table
+  local function gcFunction(text, font, gc)
+    local font  = font or {}
+    local serif = font.serif or "sansserif"
+    local size  = font.size  or 10
+    local style = font.style or "r"
+    
+    gc:setFont(serif, style, size)
+    return gc:getStringHeight(text)
+  end
+  return platform.withGC(gcFunction, text, font)
+end
+gtk.tools.getTextHeight = getTextHeight
+
+local function getTextWidth(text, font) -- font is a table
+  local function gcFunction(text, font, gc)
+    local font  = font or {}
+    local serif = font.serif or "sansserif"
+    local size  = font.size  or 10
+    local style = font.style or "r"
+    
+    gc:setFont(serif, style, size)
+    return gc:getStringWidth(text)
+  end
+  return platform.withGC(gcFunction, text, font)
+end
+gtk.tools.getTextWidth = getTextWidth
+
+---------------------------
+-- Date / Time Functions --
+---------------------------
+-- Constants used in the following functions
+-- and available to other apps
+gtk.tools.constants = {}
+gtk.tools.constants.dayAbbreviations = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"}
+gtk.tools.constants.dayNames = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+gtk.tools.constants.monthAbbreviations = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JLY", "AUG", "SEP", "OCT", "NOV", "DEC"}
+gtk.tools.constants.monthNames = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
+gtk.tools.constants.monthLengths = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+gtk.tools.constants.times = {"12:00 AM","12:30 AM","01:00 AM","01:30 AM","02:00 AM","02:30 AM","03:00 AM","03:30 AM","04:00 AM","04:30 AM","05:00 AM","05:30 AM","06:00 AM","06:30 AM","07:00 AM","07:30 AM","08:00 AM","08:30 AM","09:00 AM","09:30 AM","10:00 AM","10:30 AM","11:00 AM","11:30 AM","12:00 PM","12:30 PM","01:00 PM","01:30 PM","02:00 PM","02:30 PM","03:00 PM","03:30 PM","04:00 PM","04:30 PM","05:00 PM","05:30 PM","06:00 PM","06:30 PM","07:00 PM","07:30 PM","08:00 PM","08:30 PM","09:00 PM","09:30 PM","10:00 PM","10:30 PM","11:00 PM","11:30 PM"}
+-- Date functions container:
+gtk.tools.date = {}
+
+-- Determines which day of the week
+-- the month starts on, 1 - 7 (Sun. - Sat.)
+local function getFirstDay(month, year)
+    local c, x
+    if month < 3 then
+        month = month + 12
+        year = year - 1
+    end
+    c = (year - (year % 100)) / 100
+    year = year % 100
+    x = (math.floor(((month + 1) * 26) / 10) + year + math.floor(year / 4) + math.floor(c / 4) + 5 * c) % 7
+    return x + 1    
+end
+gtk.tools.date.getFirstDay = getFirstDay
+
+-- Returns the number of days in a given month/year
+local function numDaysInMonth(month, year)
+  local maxDays = gtk.tools.constants.monthLengths[month]
+  
+  if month == 2 and year / 4 == math.floor(year / 4) then
+    maxDays = 29
+  end
+  return maxDays
+end
+gtk.tools.date.numDays = numDaysInMonth
+
+-- Checks if a date is valid.  Returns true/false.
+local function checkDate(month, day, year)
+  if not month or not day or not year then
+    return false
+  end
+  if type(month) == "string" then
+    month = tonumber(month)
+  end
+  if month > 12 or month < 1 then
+    return false
+  end
+  
+  if type(year) == "string" then
+    year = tonumber(year)
+  end
+  if year <1900 or year > 3000 then
+    return false
+  end
+  
+  local maxDays = numDaysInMonth(month, year)
+
+  if type(day) == "string" then
+    day = tonumber(day)
+  end
+  if day > maxDays or day < 1 then
+    return false
+  end
+  
+  return true
+end
+gtk.tools.date.checkDate = checkDate
+
+-- Like checkDate, but only checks if month and
+-- day are valid.  Allows for 29 days in Feb.
+-- Returns true or false.
+local function checkDayAndMonth(month, day)
+  if not month or not day then
+    return false
+  end
+  if type(month) == "string" then
+    month = tonumber(month)
+  end
+  if month > 12 or month < 1 then
+    return false
+  end
+  
+  local maxDays = gtk.tools.constants.monthLengths[month]
+  
+  if month == 2 then
+    maxDays = 29
+  end
+  
+  if type(day) == "string" then
+    day = tonumber(day)
+  end
+  if day > maxDays or day < 1 then
+    return false
+  end
+  
+  return true
+end
+gtk.tools.date.checkDayAndMonth = checkDayAndMonth
+
+-- dateString is a string in the format of 
+-- "mm/dd/yyyy" or "mm/dd" and returns integers
+-- month, day (and year, if provided).
+local function splitDate(dateString)
+  local dateData = {}
+  if not dateString then
+    return false
+  end
+  for num in dateString:gmatch("%d+") do
+    table.insert(dateData, tonumber(num))
+  end
+  
+  return unpack(dateData)
+end
+gtk.tools.date.split = splitDate
+
+-- Given numbers month, day (and year), returns
+-- string in the format of "mm/dd" (or "mm/dd/yyyy").
+-- If a two-digit year is provided, a four-digit
+-- year is returned, assuming year is after 2000.
+local function concatDate(month, day, year)
+  if not year then
+    return string.format("%02d/%02d", month, day)
+  elseif year < 100 then
+    year = year + 2000
+  end
+  return string.format("%02d/%02d/%04d", month, day, year)
+end
+gtk.tools.date.concat = concatDate
+
+-- Given currentDate as a string "mm/dd/yyyy", it
+-- adds numDays and returns a new date string.
+local function addDays(currentDate, numDays)
+  local date    = gtk.tools.date
+  local numDays = tonumber(numDays)
+  local m, d, y = date.split(currentDate)
+  local maxDays = date.numDays(m, y)
+  
+  d = d + numDays
+  while d > maxDays do
+    m = m + 1
+    if m > 12 then
+      m = 1
+      y = y + 1
+    end
+    d = d - maxDays
+    maxDays = date.numDays(m, y)
+  end
+  
+  return date.concat(m, d, y)
+end
+gtk.tools.date.addDays = addDays
+
+-- Given currentDate as a string "mm/dd/yyyy", it
+-- subtracts numDays and returns a new date string.
+local function subtractDays(currentDate, numDays)
+  local date    = gtk.tools.date
+  local numDays = tonumber(numDays)
+  local m, d, y = date.split(currentDate)
+  
+  d = d - numDays
+  while d < 1 do
+    m = m - 1
+    if m < 1 then
+      m = 12
+      y = y - 1
+    end
+    local maxDays = date.numDays(m, y)
+    d = d + maxDays
+  end
+  
+  return date.concat(m, d, y)
+end
+gtk.tools.date.subtractDays = subtractDays
+
+-- Given date1 and date2 as strings in the form of
+-- "mm/dd/yyyy", returns true if date1 is before
+-- date2.
+local function dateFirst(date1, date2)
+  local splitDate = gtk.tools.date.split
+  local m1, d1, y1 = splitDate(date1)
+  local m2, d2, y2 = splitDate(date2)
+  
+  if y1 < y2 then
+    return true
+  elseif y1 > y2 then
+    return false
+  end
+  
+  if m1 < m2 then
+    return true
+  elseif m1 > m2 then
+    return false
+  end
+  
+  if d1 <= d2 then
+    return true
+  else 
+    return false
+  end
+  
+end
+gtk.tools.date.first = dateFirst
+
+-- Given date1 and date2 as strings in the form of
+-- "mm/dd/yyyy", returns true if date1 is after
+-- date2.
+local function dateLast(date1, date2)
+  local splitDate = gtk.tools.date.split
+  local m1, d1, y1 = splitDate(date1)
+  local m2, d2, y2 = splitDate(date2)
+  
+  if y1 > y2 then
+    return true
+  elseif y1 < y2 then
+    return false
+  end
+  
+  if m1 > m2 then
+    return true
+  elseif m1 < m2 then
+    return false
+  end
+  
+  if d1 >= d2 then
+    return true
+  else 
+    return false
+  end
+  
+end
+gtk.tools.date.last = dateLast
+
+-- Given a table wherein one of the columns (dateColumn)
+-- has date strings in the form of "mm/dd/yyyy",
+-- returns the table rows sorted by date, ascending. 
+local function sortByDateA(tableWithDates, dateColumn)
+  local function sort(a, b)
+    local dateLast = gtk.tools.date.last
+    local date1 = a[dateColumn]
+    local date2 = b[dateColumn]
+    return not dateLast(date1, date2)
+  end
+  table.sort(tableWithDates, sort)
+  return tableWithDates
+end
+gtk.tools.date.sortA = sortByDateA
+
+-- Given a table wherein one of the columns (dateColumn)
+-- has date strings in the form of "mm/dd/yyyy",
+-- returns the table rows sorted by date, descending. 
+local function sortByDateD(tableWithDates, dateColumn)
+  local function sort(a, b)
+    local dateFirst = gtk.tools.date.first
+    local date1 = a[dateColumn]
+    local date2 = b[dateColumn]
+    return not dateFirst(date1, date2)
+  end
+  table.sort(tableWithDates, sort)
+  return tableWithDates
+end
+gtk.tools.date.sortD = sortByDateD
+
+local function dayOfWeek(m, d, y)
+  local day = gtk.tools.date.getFirstDay(m, y)
+  
+  for x = 2, d do
+    day = day + 1
+    if day > 7 then
+      day = 1
+    end
+  end
+  
+  return day
+end
+gtk.tools.date.dayOfWeek = dayOfWeek
+
+local function dateText(m, d, y)
+  local dayNames   = gtk.tools.constants.dayNames
+  local monthNames = gtk.tools.constants.monthNames
+  local day        = gtk.tools.date.dayOfWeek(m, d, y)
+
+  return dayNames[day] .. ", " .. monthNames[m] .. " " .. d .. ", " .. y
+end
+gtk.tools.date.text = dateText
+
+--------------------
+-- Time functions --
+--------------------
+gtk.tools.time = {}
+
+-- Checks if a time is valid. If 'meridian' 
+-- (a string value, "AM" or "PM") is not
+-- provided, assumes a 24-hour clock.
+-- Returns true/false.
+local function checkTime(hour, minute, meridian)
+  local maxHour = meridian and 12 or 24
+  local minHour = meridian and 1 or 0
+  if not hour or not minute then
+    return false
+  end
+  if type(hour) == "string" then
+    hour = tonumber(hour)
+  end
+  if hour > maxHour or hour < 0 then
+    return false
+  end
+  
+  if type(minute) == "string" then
+    minute = tonumber(minute)
+  end
+  if minute < 0 or minute > 59 then
+    return false
+  end
+  
+  return true
+end
+gtk.tools.time.checkTime = checkTime
+
+-- timeString is a string in the format of 
+-- "hh:mm AM" (or "PM") or "hh/mm".  Returns 
+-- integers hour, minute, and string meridian
+-- (if meridian was provided).
+local function splitTime(timeString)
+  local timeData = {}
+  if not timeString then
+    return false
+  end
+  for num in timeString:gmatch("%d+") do
+    table.insert(timeData, tonumber(num))
+  end
+  
+  local hour, minute = unpack(timeData)
+  local meridian = timeString:match("AM") or timeString:match("PM")
+  
+  return hour, minute, meridian 
+end
+gtk.tools.time.split = splitTime
+
+-- Given numbers hour, minute (and string meridian), 
+-- returns string in the format of "hh:mm" (or "hh:mm AM").
+local function concatTime(hour, minute, meridian)
+  if not meridian then
+    return string.format("%02d:%02d", hour, minute)
+  end
+  return string.format("%02d:%02d", hour, minute) .. " " .. meridian
+end
+gtk.tools.time.concat = concatTime
+
+-- Given time1 and time2 as strings in the form of
+-- "hh:mm AM", returns true if time1 is before
+-- time2.
+local function timeFirst(time1, time2)
+  local splitTime  = gtk.tools.time.split
+  local h1, m1, mm1 = splitTime(time1)
+  local h2, m2, mm2 = splitTime(time2)
+  
+  if h1 == 12 then
+    h1 = 0
+  end
+  if h2 == 12 then
+    h2 = 0
+  end
+  if mm1 then
+    h1 = h1 + (mm1:find("PM") and 12 or 0)
+  end
+  if mm2 then
+    h2 = h2 + (mm2:find("PM") and 12 or 0)
+  end
+  
+  if h1 < h2 then
+    return true
+  elseif h1 > h2 then
+    return false
+  end
+  
+  if m1 <= m2 then
+    return true
+  elseif m1 > m2 then
+    return false
+  end    
+end
+gtk.tools.time.first = timeFirst
+
+-- Given time1 and time2 as strings in the form of
+-- "hh:mm AM", returns true if time1 is after
+-- time2.
+local function timeLast(time1, time2)
+  local splitTime  = gtk.tools.time.split
+  local h1, m1, mm1 = splitTime(time1)
+  local h2, m2, mm2 = splitTime(time2)
+  
+  if h1 == 12 then
+    h1 = 0
+  end
+  if h2 == 12 then
+    h2 = 0
+  end
+  if mm1 then
+    h1 = h1 + (mm1:find("PM") and 12 or 0)
+  end
+  if mm2 then
+    h2 = h2 + (mm2:find("PM") and 12 or 0)
+  end
+  
+  if h1 > h2 then
+    return true
+  elseif h1 < h2 then
+    return false
+  end
+  
+  if m1 >= m2 then
+    return true
+  elseif m1 < m2 then
+    return false
+  end    
+end
+gtk.tools.time.last = timeLast
+
+-- Given a table wherein one of the columns (timeColumn)
+-- has time strings in the form of "hh:mm AM",
+-- returns the table rows sorted by time, ascending. 
+local function sortByTimeA(tableWithTimes, timeColumn)
+  local function sort(a, b)
+    local timeLast = gtk.tools.time.last
+    local time1 = a[timeColumn] or "00:00 AM"
+    local time2 = b[timeColumn] or "00:00 AM"
+    return not timeLast(time1, time2)
+  end
+  table.sort(tableWithTimes, sort)
+  return tableWithTimes
+end
+gtk.tools.time.sortA = sortByTimeA
+
+-- Given a table wherein one of the columns (timeColumn)
+-- has time strings in the form of "hh:mm AM",
+-- returns the table rows sorted by time, descending. 
+local function sortByTimeD(tableWithTimes, timeColumn)
+  local function sort(a, b)
+    local timeFirst = gtk.tools.time.first
+    local time1 = a[timeColumn] or "00:00 AM"
+    local time2 = b[timeColumn] or "00:00 AM"
+    return not timeFirst(time1, time2)
+  end
+  table.sort(tableWithTimes, sort)
+  return tableWithTimes
+end
+gtk.tools.time.sortD = sortByTimeD
+
+-- Stopwatch class:
+local stopWatch = class()
+do 
+  function stopWatch:init(startTime, startNow)
+    self.elapsedTime = 0
+    if startNow then
+      self.startTime = timer.getMilliSecCounter()
+    end 
+  end
+  
+  function stopWatch:start()
+    if self.startTime then
+      return     -- Already started
+    end
+    self.pauseTime = false
+    self.startTime = timer.getMilliSecCounter()
+  end
+
+  function stopWatch:reset()
+    self.elapsedTime = 0
+    self.startTime = timer.getMilliSecCounter()
+    self.pauseTime = false
+  end
+
+  function stopWatch:set(timeString)
+    local days, hours, minutes, seconds
+    local time = {}
+    local slot = 1
+    
+    for i in string.gmatch(timeString, "%d+") do
+      time[slot] = i
+      slot = slot + 1
+    end
+    
+    local factors = { 1, 60, 3600, 86400 }
+    local elapsedTime = 0
+    
+    slot = 1
+    for i = #time, 1, -1 do
+      elapsedTime = elapsedTime + factors[slot] * time[i]
+      slot = slot + 1
+    end
+    
+    self.elapsedTime = elapsedTime
+  end
+  
+  function stopWatch:stop()
+    if not self.startTime then
+      return     -- Already stopped.
+    end
+    self.pauseTime   = timer.getMilliSecCounter()
+    self.elapsedTime = self.elapsedTime + (self.pauseTime - self.startTime)/1000
+    self.startTime   = false
+  end
+  
+  function stopWatch:getTime(limit)
+    -- For limit, 1 = show only seconds
+    --            2 = and minutes
+    --            3 = and hours
+    --            4 = and days
+    local limit = limit or 3
+    local time = self.pauseTime or timer.getMilliSecCounter()
+    if self.startTime then
+      time = math.floor((time - self.startTime)/1000) + self.elapsedTime
+    else 
+      time = math.floor(self.elapsedTime)
+    end
+    
+    local seconds = 0
+    local minutes = 0
+    local hours   = 0
+    local days    = 0
+    
+    if time/86400 >= 1  then
+      days = math.floor(time/86400)
+      time = time - (days * 86400)
+    end
+    
+    if time/3600 >= 1 then
+      hours = math.floor(time/3600)
+      time = time - (hours * 3600)
+    end
+
+    if time/60 >= 1  then
+      minutes = math.floor(time/60)
+      time = time - (minutes * 60)
+    end
+
+    seconds = time    
+    timeStr = string.format("%02d:%02d:%02d:%02d", days, hours, minutes, seconds)
+    return timeStr:sub(13 - 3 * limit)
+    
+  end
+end
+
+gtk.tools.time.stopWatch = stopWatch
+
+gtk.mathTools={}
+
+function gtk.mathTools.base10to2(n)
+  local str = ""
+  if n ~= 0 then
+    while n ~= 1 do
+      str = str .. tostring(n%2)
+      n = math.floor(n/2)
+    end
+    str = str .. tostring(n%2)
+    return string.reverse(str)
+  else
+    return "0"
+  end
+end
+
+function gtk.mathTools.base2to10(n)
+  local num = 0 
+  local ex = string.len(n) - 1 
+  local l = 0 
+  l = ex + 1 
+  for i = 1, l do 
+    b = string.sub(n, i, i) 
+    if b == "1" then 
+      num = num + 2^ex 
+    end 
+    ex = ex - 1 
+  end 
+  return num 
+end
+
+function gtk.mathTools.int2Hex(int)
+  if int < 10 then
+    return tostring(int)
+  else
+    if int == 10 then return "A"
+    elseif int == 11 then return "B"
+    elseif int == 12 then return "C"
+    elseif int == 13 then return "D"
+    elseif int == 14 then return "E"
+    elseif int == 15 then return "F" 
+    end
+  end
+end
+
+function gtk.mathTools.color2Hex(color)
+  local mathTools = gtk.mathTools
+  local red   = mathTools.int2Hex(math.floor(color[1]/16)) .. mathTools.int2Hex(color[1]%16)
+  local green = mathTools.int2Hex(math.floor(color[2]/16)) .. mathTools.int2Hex(color[2]%16)
+  local blue  = mathTools.int2Hex(math.floor(color[3]/16)) .. mathTools.int2Hex(color[3]%16)
+  return red .. green .. blue
+end

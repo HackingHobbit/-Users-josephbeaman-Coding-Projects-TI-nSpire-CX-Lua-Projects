@@ -1,0 +1,689 @@
+--  TODO: add selection function for cut/copy/delete
+--  Maybe make more efficient.
+------------------- 
+-- Editor widget -- 
+------------------- 
+
+do 
+  local Widget  = gtk.Widget 
+  local Widgets = gtk.Widgets 
+  
+  toolpalette.enableCopy(true)
+  toolpalette.enablePaste(true)
+  toolpalette.enableCut(true)
+  
+  do Widgets.Editor = class(Widget) 
+    local Widget    = gtk.Widget 
+    local Editor    = Widgets.Editor 
+
+    Editor.defaultStyle = { 
+      textColor       = {0, 0, 0}, 
+      backgroundColor = {248, 252, 248}, 
+      borderColor     = {136, 136, 136}, 
+      focusColor      = {40, 148, 184},
+      disabledColor   = {200, 200, 200}, 
+      cursorColor     = {255, 0, 0},
+      scollbarColor   = {130, 130, 130},
+      selectionColor  = {200, 200, 255},
+      
+      defaultWidth  = 50, 
+      defaultHeight = 50, 
+
+      margins = {
+        left    = 2,
+        right   = 4,   -- Includes Scrollbar
+        top     = 2,
+        bottom  = 2,
+      },
+      
+      font = { 
+        serif = "sansserif", 
+        style = "r", 
+        size  = 8,
+      } 
+    } 
+
+    local function string2table(str)
+      local t = string.split(str, "↵") -- Treats ↵ as line separator
+      for x = 1, #t - 1 do
+        t[x] = t[x] .. "↵"
+      end
+      return t
+    end
+
+    local function table2string(t)
+      return table.concat(t, "")
+    end
+    
+    function Editor:init(arg) 
+      self.value    = arg.value or "" -- "value" is all the text as a string.
+      self.readOnly = arg.readOnly or false
+      self.visible  = arg.visible  or true
+      self.disabled = arg.disabled or false
+      self.wordWrap = arg.wordWrap or true
+      self.cursor   = arg.cursor or {0, 1} -- {character position, line number}
+      self.top      = arg.top or 0
+      
+      self.showCursor = false
+      self.showMark   = arg.showMark or false
+      
+      local style = arg.style or {} 
+      self:setStyle(style)
+      style = self.style
+
+      local dimension = Dimension(style.defaultWidth, style.defaultHeight) 
+
+      Widget.init(self, arg.position, dimension) 
+      
+      self.text = string2table(self.value) -- "text" is a table of lines from "value"
+    end 
+
+    function Editor:splitLine(gc, str, maxWidth)
+      local spaceAt   = 0
+      local testStr   = ""
+      local testWidth = 0
+      local prevSpace = 0
+      local newLines  = {}
+      
+      local function maxFit(str, maxWidth)
+        for x = 1, #str do
+          local test = string.sub(str, 1, x)
+          local w = gc:getStringWidth(test)
+          if w > maxWidth then
+            return x - 1
+          end
+        end
+        return #str
+      end
+      
+      while #str > 0 do
+        if maxFit(str, maxWidth) == #str then
+          table.insert(newLines, str)
+          str = ""
+          break
+        end
+        
+        spaceAt   = string.find(str, "%s")
+        if spaceAt then
+          repeat
+            testStr   = string.sub(str, 1, spaceAt)
+            testWidth = gc:getStringWidth(testStr)
+            if testWidth <= maxWidth then
+              prevSpace = spaceAt
+            end
+            spaceAt   = string.find(str, "%s", spaceAt + 1)
+          until (not spaceAt) or (testWidth > maxWidth)
+          
+          if prevSpace > 0 then
+            local newLine = string.sub(str, 1, prevSpace)
+            str = string.sub(str, prevSpace + 1)
+            prevSpace = 0
+            table.insert(newLines, newLine)
+          else
+            -- split at max
+            local cutAt = maxFit(str, maxWidth)
+            local newLine = string.sub(str, 1, cutAt)
+            table.insert(newLines, newLine)
+            str = string.sub(str, cutAt + 1)
+          end
+        else
+          -- Split line at max chars possible, call self on remainder
+          local cutAt = maxFit(str, maxWidth)
+          if prevSpace > 0 then
+            cutAt = prevSpace
+            prevSpace = 0
+          end
+          local newLine = string.sub(str, 1, cutAt)
+          table.insert(newLines, newLine)
+          str = string.sub(str, cutAt + 1)
+        end      
+      end
+      return newLines
+    end
+    
+    function Editor:wrapText(gc, textTable, maxWidth)
+      local displayLines = {}
+      
+      for x = 1, #textTable do
+        local textLine  = textTable[x]
+        local lineWidth = gc:getStringWidth(textLine)
+    
+        if lineWidth <= maxWidth then
+          table.insert(displayLines, textLine)
+        else
+          local lines = self:splitLine(gc, textLine, maxWidth)
+          for y = 1, #lines do
+            local line = lines[y]
+            table.insert(displayLines, line)
+          end
+        end
+      end
+      return displayLines
+    end
+
+    function Editor:prepare(gc)      
+      if not self.wordWrap then
+        return  
+      end
+      
+      local width, height = self:getDimension()
+      local style         = self.style
+      local font          = style.font
+      local margins       = style.margins
+
+      gc:setFont(font.serif, font.style, font.size)
+      
+      -- Determine visible line(s) area
+      local lm = margins.left
+      local rm = margins.right
+      local maxWidth = width - lm - rm
+
+      self.displayLines = self:wrapText(gc, self.text, maxWidth)
+
+      -- Set cursor position, if necessary
+      if not self.cursor then
+        self:setCursorPos()
+        if self.newLine then
+          self.newLine = false
+          self:arrowRight()
+        end
+      end
+      
+      -- Make sure cursor is in view
+      local tm = style.margins.top
+      local bm = style.margins.bottom
+      local lineHeight = gc:getStringHeight("G") * 2 / 3 + 2
+      local numVisible = math.floor((height - tm - bm) / lineHeight)
+      self.lineHeight = lineHeight
+      self.numVisible = numVisible
+      
+      self:adjustWindow()
+    end
+    
+    function Editor:draw(gc, x, y, width, height) 
+      local lines   = self.displayLines
+      local style   = self.style
+      local font    = style.font
+      local margins = style.margins
+      local top     = self.top
+      local lineHeight = self.lineHeight
+      local numVisible = self.numVisible
+      
+      gc:setFont(font.serif, font.style, font.size)
+      
+      -- Determine visible line(s) area
+      local tm = margins.top
+      local bm = margins.bottom
+      local lm = margins.left
+      local rm = margins.right
+      
+      
+      gc:setColorRGB(unpack(style.backgroundColor))
+      gc:fillRect(x , y , width + 1, height + 1)
+      
+      gc:setColorRGB(unpack(style.borderColor))
+      gc:setPen()
+      gc:drawRect(x, y, width, height)
+
+      if self.hasFocus then
+        gc:setColorRGB(unpack(style.focusColor))
+        gc:drawRect(x - 1, y - 1, width + 2, height + 2)
+      end
+            
+      x = x + rm
+      y = y + tm
+
+      -- Draw cursor
+      if self.showCursor then
+        local cX, cY = unpack(self.cursor)
+        gc:setColorRGB(unpack(style.cursorColor))
+        cX = x + gc:getStringWidth(string.sub(lines[cY], 1, cX)) - 1
+        cY = y + (cY - top - 1) * lineHeight - 1
+        gc:drawString("|", cX, cY, "top")
+      end
+
+      -- Draw scrollbar
+      local sStart = y - tm + 1
+      local sEnd = y + height - 1
+      local sTotal = sEnd - sStart
+      local max = #lines
+      
+      local sLength = math.floor(numVisible / max * height)
+      if sLength > height - 2 then
+        sLength = height - 2
+      end
+      sStart = sStart + top / max * height
+
+      gc:setColorRGB(unpack(style.scollbarColor))
+      gc:fillRect(x + width - lm - 4, sStart, 2, sLength)
+            
+      -- Print text
+      gc:setColorRGB(unpack(style.textColor))
+      for l = top + 1, top + numVisible do
+        if lines[l] then
+          -- Draw selection, if necessary
+          if self.selection then
+            local cX, cY = unpack(self.cursor)
+            local sX, sY = unpack(self.selection)
+            local y1 = math.min(cY, sY)
+            local x1 = math.min(cX, sX)
+            local y2 = math.max(cY, sY)
+            local x2 = math.max(cX, sX)
+            if l >= y1 and l <= y2 then
+              local line = lines[l]
+              gc:setColorRGB(unpack(style.selectionColor))
+              
+              local sStart = gc:getStringWidth(line:sub(1, x1 - 1)) - 1
+              
+              if y1 == y2 then
+                sWidth = gc:getStringWidth(line:sub(x1, x2))
+                gc:fillRect(x + sStart, y - 1, sWidth, lineHeight + 2)
+              elseif l < y2 then
+                sWidth = gc:getStringWidth(line) + 2
+                gc:fillRect(x - 1, y - 1, sWidth, lineHeight + 2)
+              elseif l == y2 then
+                sWidth = gc:getStringWidth(line:sub(1, x2))
+                gc:fillRect(x - 1, y - 1, sWidth, lineHeight + 2)
+              else
+                sWidth = gc:getStringWidth(line:sub(x1))
+                gc:fillRect(x + xStart, y - 1, sWidth, lineHeight + 2)
+              end  
+            end
+            gc:setColorRGB(unpack(style.textColor))
+          end
+
+          if lines[l]:find("↵") then
+            local markStart = lines[l]:find("↵")
+            local line = lines[l]:sub(1, markStart - 1)
+            gc:drawString(line, x, y, "top")
+            if self.showMark then
+              local lineW = gc:getStringWidth(line)
+              gc:setColorRGB(0, 0, 255)
+              gc:drawString("↵", x + lineW, y, "top")
+              gc:setColorRGB(unpack(style.textColor))
+            end
+          else
+            gc:drawString(lines[l], x, y, "top")
+          end
+          y = y + lineHeight          
+        end
+      end
+
+    end 
+
+    -- Returns the number of characters eguivalent to current position
+    function Editor:getCursorPos()
+      local cX, cY = unpack(self.cursor)
+      local lines  = self.displayLines
+      local charCount = 0
+      for y = 1, cY - 1 do
+        line = lines[y]
+        charCount = charCount + #line
+      end
+      charCount = charCount + cX
+      return charCount
+    end
+    
+    -- Sets cursor position numChars from the start
+    function Editor:setCursorPos()
+      local numChars = self.cursorAdjustValue
+      local lines = self.displayLines
+      local charCount = 0
+      local cX, cY    = 0, 0
+      
+      for y = 1, #lines do
+        local len = #lines[y]
+        cY = y
+        if charCount + len >= numChars then
+          cX = numChars - charCount
+          break
+        end
+        charCount = charCount + len
+      end
+            
+      self.cursor = {cX, cY}
+      self.cursorAdjustValue = nil
+    end
+        
+    function Editor:insertText(text)
+      local displayLines = self.displayLines
+      local x, y = unpack(self.cursor)
+      local line = displayLines[y]
+      local preInsert = line:sub(1, x)
+      local postInsert = line:sub(x + 1)
+      local charNum = self:getCursorPos()
+      
+      line = preInsert .. text .. postInsert
+      displayLines[y] = line
+      self.displayLines = displayLines
+      
+      self.value = table2string(displayLines)
+      self.text = string2table(self.value)
+      
+      self.cursor = nil
+      self.cursorAdjustValue = charNum + #text
+      if text == "↵" then
+        self.newLine = true
+      end
+      self:invalidate() 
+    end
+    
+    function Editor:charIn(key)
+      local page = self.numVisible
+      local lines = self.displayLines
+      local top = self.top
+      local cX, cY = unpack(self.cursor)
+      
+      if string.byte(key) == 226 then    --shift & +
+        top = top + page
+        cY = cY + page
+        if top + page > #lines then
+          top = #lines - page
+          cY = #lines
+          if top < 0 then
+            return 
+          end
+        end
+        cX = 0
+        self.cursor = {cX, cY}
+        self.top = top
+        return 
+      elseif string.byte(key) == 239 then    --shift & -
+        top = top - page
+        cY = cY - page
+        if top < 0 then
+          top = 0
+          cY = 1
+        end
+        cX = 0
+        self.cursor = {cX, cY}
+        self.top = top
+        return         
+      elseif key == "root(" then    --ctrl & ^
+        cX = 0
+        self.cursor = {cX, cY}
+        return 
+      elseif self.readOnly then
+        return 
+      end
+      self:insertText(key)
+    end
+    
+    function Editor:onFocus()
+      timer.start(.5)
+    end
+    
+    function Editor:onBlur()
+      timer.stop()
+      self.showCursor = false
+      self:invalidate()
+    end
+
+    function Editor:adjustWindow()
+      local cX, cY = unpack(self.cursor)
+      local top = self.top
+      local numVisible = self.numVisible
+      
+      if cY > top + numVisible  then
+        self.top = cY - numVisible
+      elseif cY < top + 1 then
+        self.top = cY - 1
+      end
+      
+    end
+    
+    function Editor:timer()
+      self.showCursor = not self.showCursor
+      self:invalidate()
+    end
+    
+    function Editor:doAction() 
+      self.parent:invalidate() 
+      CallEvent(self, "onAction") 
+    end 
+
+    function Editor:onMouseDown() 
+      self.meDown = true 
+    end 
+
+    function Editor:onMouseUp(x, y, onMe) 
+      self.meDown = false 
+
+      if onMe then 
+        self:doAction() 
+      end 
+    end 
+
+    function Editor:enterKey() 
+      self:doAction() 
+    end
+    
+    function Editor:arrowDown()
+      local cX, cY = unpack(self.cursor)
+      local lines = self.displayLines
+      
+      cY = cY + 1
+      if cY > #lines then
+        cY = #lines
+        cX = #lines[cY] -- last character
+      elseif cX > #lines[cY] then
+        cX = #lines[cY]
+      end
+      
+      self.cursor = {cX, cY}
+    end
+
+    function Editor:arrowUp()
+      local cX, cY = unpack(self.cursor)
+      local lines = self.displayLines
+      
+      cY = cY - 1
+      if cY < 1 then
+        cY = 1
+        cX = 0 -- first character
+      elseif cX > #lines[cY] then
+        cX = #lines[cY]
+      end
+      
+      self.cursor = {cX, cY}
+    end
+
+    function Editor:arrowRight()
+      local cX, cY = unpack(self.cursor)
+      local lines = self.displayLines
+      local line = lines[cY]
+
+      if cX == #line - 3 and line:find("↵") then
+        cX = cX + 2
+        if not self.showMark then
+          cX = cX + 1
+        end
+      end
+      
+      cX = cX + 1
+      if cX > #lines[cY] then
+        if cY < #lines then
+          cY = cY + 1
+          cX = 0
+        else
+          cX = cX - 1
+        end
+      end
+      
+      self.cursor = {cX, cY}
+    end
+
+    function Editor:arrowLeft()
+      local cX, cY = unpack(self.cursor)
+      local lines = self.displayLines
+      local line = lines[cY]
+      
+      if cX == #line and line:find("↵") then
+        cX = cX - 2
+      end
+      cX = cX - 1
+      if cX < 0 then
+        if cY > 1 then
+          cY = cY - 1
+          cX = #lines[cY]
+          if not self.showMark then
+            cX = cX - 3
+          end
+        else
+          cX = 0
+        end
+      end
+      
+      self.cursor = {cX, cY}
+    end
+
+    function Editor:backspaceKey()
+      -- TODO: delete selection
+      local cX, cY = unpack(self.cursor)
+      local lines = self.displayLines
+      local line = lines[cY]
+
+      if cY == 1 and cX == 0 then
+        return 
+      elseif cX == 0 then
+        cY = cY - 1
+        line = lines[cY]
+        cX = #lines[cY]
+      elseif cX == #lines[cY] and lines[cY]:find("↵") then 
+        cX = cX - 2
+        line = line:sub(1, #line - 2)
+      end
+      
+      local prefix = line:sub(1, cX - 1)
+      local suffix = line:sub(cX + 1)
+      line = prefix .. suffix
+      cX = cX - 1
+
+      self.displayLines[cY] = line      
+      self.cursor = {cX, cY}
+      local charNum = self:getCursorPos()
+
+      self.value = table2string(self.displayLines)
+      self.text = string2table(self.value)
+      
+      self.cursor = nil
+      self.cursorAdjustValue = charNum
+      self:invalidate() 
+
+    end
+
+    function Editor:mouseUp(x, y)
+      local top = self.top
+      local lines = self.displayLines
+      local lh  = self.lineHeight
+      local xx, yy = self:getPosition()
+      local getTextWidth = gtk.tools.getTextWidth
+      local font = self.style.font
+      local cY = math.floor((y - yy) / lh) + 1 + top
+
+      if not lines or not cY  or #lines == 0 then
+        return 
+      end
+
+      if cY > #lines then
+        return 
+      end
+      
+      local line = lines[cY]
+      for char = 0, #line do
+        local charX = getTextWidth(line:sub(1, char), font) + xx
+        if charX >= x then
+          cX = char - 1
+          break
+        end
+      end
+
+      if not cX then
+        return 
+      end
+
+      if cX < 0 then
+        cX = 0
+      end
+      
+      self.cursor = {cX, cY}
+    end
+
+    function Editor:returnKey()
+      self:insertText("↵")
+    end
+
+    function Editor:paste()
+      local text = clipboard.getText()
+      while text:find("\n") do
+        c1, c2 = text:find("\n")
+        text = text:sub(1, c1 - 1) .. "↵" .. text:sub(c2 + 1)
+      end
+      self:insertText(text)
+    end
+
+--[[
+    function Editor:createMathBox()
+      -- Not ready yet, so ... 
+      
+      if not self.selection then
+        self.selection = self.cursor
+      end
+    end
+]]--    
+    
+    function Editor:getSelection()
+      if not self.selection or not self.cursor then
+        return nil
+      end
+      
+      local sX, sY = unpack(self.selection)
+      local cX, cY = unpack(self.cursor)
+      local sel = ""
+      local lines = self.displayLines
+      
+      if cX == sX and cY == sY then
+        return nil
+      end
+      
+      local y1 = math.min(cY, sY)
+      local x1 = math.min(cX, sX)
+      local y2 = math.max(cY, sY)
+      local x2 = math.max(cX, sX)
+      
+      if y1 == y2 then
+        local line = lines[y1]
+        sel = line:sub(x1, x2)
+        if #sel == 0 then
+          return nil
+        else
+          return sel
+        end
+      else
+        local line = lines[y1]
+        sel = line:sub(x1)
+        for y = y1 + 1, y2 - 1 do
+          line = lines[y]
+          sel = sel .. line
+        end
+        line = lines[y2]
+        sel = sel .. line:sub(1, x2)
+        return sel
+      end
+    end
+    
+    function Editor:escapeKey()
+      self.selection = nil
+      self:invalidate()
+    end
+    
+    function Editor:setValue(value)
+      self.value = value
+      self.text = string2table(self.value)
+      self.cursor   = {0, 1}
+      self.top      = 0
+      self:invalidate()
+    end
+  end 
+
+end

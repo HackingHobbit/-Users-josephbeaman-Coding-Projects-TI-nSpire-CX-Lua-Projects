@@ -1,0 +1,693 @@
+-------------------------------
+--  ScrollBar-based Widgets  --
+-------------------------------
+local Widget        = gtk.Widget 
+local Widgets       = gtk.Widgets 
+local getTextHeight = gtk.tools.getTextHeight
+do Widgets.scrollBar = class(Widget)
+  local Widget    = gtk.Widget 
+  local scrollBar = Widgets.scrollBar 
+
+  scrollBar.upButton   = image.new("\011\0\0\0\010\0\0\0\0\0\0\0\022\0\0\0\016\0\001\0001\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\198\255\255\255\255\255\255\255\255\156\243\255\255\255\255\255\255\255\2551\1981\198\255\255\255\255\255\255\214\218\0\128\214\218\255\255\255\255\255\2551\1981\198\255\255\255\255\247\222B\136\0\128B\136\247\222\255\255\255\2551\1981\198\255\255\247\222B\136!\132\0\128!\132B\136\247\222\255\2551\1981\198\247\222B\136!\132B\136R\202B\136!\132B\136\247\2221\1981\198\132\144B\136B\136\247\222\255\255\247\222B\136B\136\132\1441\1981\198\156\243\132\144\247\222\255\255\255\255\255\255\247\222\132\144\189\2471\1981\198\255\255\222\251\255\255\255\255\255\255\255\255\255\255\222\251\255\2551\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\198")
+  scrollBar.downButton = image.new("\011\0\0\0\010\0\0\0\0\0\0\0\022\0\0\0\016\0\001\0001\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\198\255\255\222\251\255\255\255\255\255\255\255\255\255\255\222\251\255\2551\1981\198\156\243\132\144\247\222\255\255\255\255\255\255\247\222\132\144\189\2471\1981\198\132\144B\136B\136\247\222\255\255\247\222B\136B\136\132\1441\1981\198\247\222B\136!\132B\136R\202B\136!\132B\136\247\2221\1981\198\255\255\247\222B\136!\132\0\128!\132B\136\247\222\255\2551\1981\198\255\255\255\255\247\222B\136\0\128B\136\247\222\255\255\255\2551\1981\198\255\255\255\255\255\255\214\218\0\128\214\218\255\255\255\255\255\2551\1981\198\255\255\255\255\255\255\255\255\156\243\255\255\255\255\255\255\255\2551\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\1981\198")
+  
+  function scrollBar:init(arg)
+    self.frameColor = arg.frameColor or {96, 100, 96}
+    self.shadeColor = arg.shadeColor or {184, 184, 184}
+    self.parent = arg.parent
+    self.ignoreFocus = true
+    
+    local parent   = self.parent
+    local position = Position{
+      top = "0px",
+      right = "0px"
+    }
+    local dimension = Dimension(14, parent.dimension.height)
+    
+    position = arg.position or position
+    dimension = arg.dimension or dimension
+    
+    Widget.init(self, position, dimension) 
+
+    self.visible = arg.visible and true
+    
+    self.numVisible = arg.numVisible or 10
+    self.total      = arg.total   or 15
+    self.top        = arg.top     or 4
+  end
+  
+  function scrollBar:draw(gc, x, y, width, height)
+    local h = height
+    local w = width
+    local v = self.parent.numVisible
+    local t = self.total
+    local top = self.parent.top
+    
+    gc:setColorRGB(255,255,255)
+    gc:fillRect(x + 1, y + 1,  w - 1, h - 1)
+    
+    gc:drawImage(self.upButton  , x + 2, y + 2)
+    gc:drawImage(self.downButton, x + 2, y + h - 11)
+    gc:setColorRGB(unpack(self.frameColor))
+    if h > 28 then
+      gc:drawRect(x + 3, y + 14, 8, h - 28)
+    end
+    
+    if v < t then
+      local step    = (h - 26) / t
+      gc:fillRect(x + 3, y + 14  + step * top, 9, step * v)
+      gc:setColorRGB(unpack(self.shadeColor))
+      gc:fillRect(x + 2 , y + 14 + step * top, 1, step * v)
+      gc:fillRect(x + 12, y + 14 + step * top, 1, step * v)
+    end
+  end
+  
+  function scrollBar:update(top, numVisible, total)
+    self.top         = top     or self.top
+    self.numVisible  = numVisible or self.numVisible
+    self.total       = total   or self.total
+  end
+
+  function scrollBar:updateParent()
+    local parent = self.parent
+    parent.top = self.top
+    parent:invalidate()
+  end
+  
+  function scrollBar:mouseUp(x, y)
+    local X = self.position.cachedX
+    local Y = self.position.cachedY
+    local height = self.dimension.cachedHeight
+    
+    local upX    = X + 2
+    local upY    = Y + 2
+    local downX  = X + 2
+    local downY  = Y + height - 11
+    local butH   = 10
+    local butW   = 11
+    local aTop   = self.parent.adjustHeightValue or 1
+    
+    if x >= upX and x < upX + butW and y >= upY and y < upY + butH and self.top > 0 then
+      self.top    = self.top - aTop
+      if self.top < 0 then
+        self.top = 0
+      end
+      self:updateParent()
+    elseif x >= downX and x < downX + butW and y >= downY and y < downY + butH and self.top < self.total - self.numVisible then
+      self.top    = self.top + aTop
+      if self.top > self.total - self.numVisible then
+        self.top = self.total - self.numVisible
+      end
+      self:updateParent()
+    end
+  end
+
+end
+
+-----------------
+-- List Widget --
+-----------------
+local Widget  = gtk.Widget 
+local Widgets = gtk.Widgets 
+
+do Widgets.List   = class(Widget)
+  local Widget    = gtk.Widget 
+  local List      = Widgets.List 
+  local scrollBar = Widgets.scrollBar
+
+  List.defaultStyle = { 
+    textColor       = {000, 000, 000}, 
+    backgroundColor = {248, 252, 248}, 
+    borderColor     = {136, 136, 136},
+    selectColor     = {040, 148, 184}, 
+    focusColor      = {040, 148, 184},
+--    disabledColor   = {200, 200, 200}, 
+    selectedTextColor = {255, 255, 255},
+
+    defaultWidth  = 150, 
+    defaultHeight = 153,
+    lineHeight    = 18, 
+    font = { 
+      serif = "sansserif", 
+      style = "r", 
+      size = 10 
+    } 
+  } 
+
+  function List:init(arg)
+    local style = arg.style or {} 
+    self:setStyle(style)
+    style = self.style
+
+    local dimension = Dimension(style.defaultWidth, style.defaultHeight) 
+
+    Widget.init(self, arg.position, dimension) 
+
+    self.top      = arg.top or 0
+    self.selected = arg.selected or 1
+
+    self.items    = arg.items or {}
+
+    self.scrollBar = scrollBar{
+      parent = self,
+      numVisible = #self.items,
+      top = 0,
+      total = #self.items,
+      frameColor = arg.frameColor, -- scrollbar's colors
+      shadeColor = arg.shadeColor
+    }
+    
+    function self.scrollBar:onAction(top)
+      self.parent.top = top
+    end
+
+    self:addChild(self.scrollBar)
+
+  end
+  
+  function List:draw(gc, x, y, width, height)
+    local x = x
+    local y = y
+    local w = width
+    local h = height
+    
+    local lh         = self.style.lineHeight
+    local top        = self.top
+    local sel        = self.selected
+    local style      = self.style
+    local items      = self.items            
+    local numVisible = math.floor(h / lh)
+    
+    self.numVisible = numVisible
+    
+    if self.hasFocus then
+      gc:setColorRGB(unpack(style.focusColor))
+      gc:setPen("medium")
+      gc:drawRect(x, y, w, h)
+      gc:setPen()
+    end
+    
+    gc:smartClipRect("subset", x, y, w + 1, h + 1)
+
+    if self.drawBackground then
+      self:drawBackground(gc, x, y, w, h)
+    else
+      gc:setColorRGB(unpack(style.backgroundColor))
+      gc:fillRect(x, y, w, h)
+    end
+    
+    gc:setColorRGB(unpack(style.borderColor))
+    gc:drawRect(x, y, w, h)
+    
+    
+    local font = self.style.font
+    gc:setFont(font.serif, font.style, font.size)
+  
+    local label, item
+    for i=1, math.min(#items - top, numVisible + 1) do
+      item    = items[i + top]
+      label   = gc:textLimit(item, w - 20)
+      
+      if i + top == sel then
+        gc:setColorRGB(unpack(style.selectColor))
+        gc:fillRect(x + 1, y + i * lh - lh + 1, w - 15, lh)
+        gc:setColorRGB(unpack(style.selectedTextColor))
+      else
+        gc:setColorRGB(unpack(style.textColor))
+      end
+      
+      gc:drawString(label, x + 5, y + i * lh - lh, "top")
+    end
+    gc:smartClipRect("restore")
+    
+    self.scrollBar:update(top, numVisible, #items)
+    
+  end
+  
+  function List:arrowUp()
+    local sel = self.selected
+    local top = self.top
+    local h = self.dimension.height
+    local lh = self.style.lineHeight
+    
+    if sel > 1 then
+      sel = sel - 1
+      if top >= sel then
+        top = top - 1
+      end
+    else
+      top = h / lh < #self.items and math.ceil(#self.items - h / lh) or 0
+      sel = #self.items
+    end
+    self:change(sel, self.items[sel])
+    self.selected = sel
+    self.top = top
+    self:invalidate()
+  end
+  
+  function List:arrowDown()
+    local sel = self.selected
+    local top = self.top
+    local h = self.dimension.height
+    local lh = self.style.lineHeight
+
+    if sel < #self.items then
+      sel= sel + 1
+      if sel > (h / lh) + top then
+        self.top    = self.top + 1
+      end
+    else
+      self.top = 0
+      sel = 1
+    end
+    self.selected = sel
+    self:change(sel, self.items[sel])
+    self:invalidate()
+  end
+  
+  function List:mouseUp(x, y)
+    local X = self.position.cachedX
+    local Y = self.position.cachedY
+    local w = self.dimension.cachedWidth
+    local h = self.dimension.cachedHeight
+    local lh = self.style.lineHeight
+    local top = self.top
+    
+    if x >= X and x < X + w - 16 and y >= Y and y < Y + h then
+      local sel = math.floor((y - Y) / lh) + 1 + top
+      if sel == self.selected then
+        self:enterKey()
+        return
+      end
+      if self.items[sel] then
+        self.selected = sel
+        self:change(sel, self.items[sel])
+      else
+        return
+      end
+      if sel > (h / lh) + top then
+        self.top = self.top + 1
+      end
+      if self.top >= sel then
+        self.top = self.top - 1
+      end
+
+    end 
+    self.scrollBar:mouseUp(x, y)
+  end  
+  
+  function List:enterKey()
+    local sel = self.selected
+    if self.items[sel] then
+      self:onAction(sel, self.items[sel])
+    end
+  end
+  
+  function List:charIn(key)
+    local items = self.items
+    local sel = self.selected
+    local top = self.top
+    local numVisible = self.numVisible
+
+    if key == "∫(" then
+      sel = sel + numVisible
+      if sel > #items then
+        sel = #items
+      end
+    elseif string.byte(key) == 239 then -- Shift and -
+      sel = sel - numVisible
+      if sel < 1 then
+        sel = 1
+      end
+    else
+      for x = 1, #items do
+        local item = items[x]
+        if item:sub(1, 1) == key then
+          if x ~= sel then
+            sel = x
+            break
+          end
+        end
+      end
+    end
+    self:change(sel, items[sel])
+    if sel <= top then
+      self.top = sel - 1
+    elseif sel > top + numVisible then
+      self.top = sel - numVisible
+    end
+    self.selected = sel
+    self:invalidate()
+  end
+  
+  function List:moveItemDown()
+    local items = self.items
+    local sel = self.selected
+    local top = self.top
+    local numVisible = self.numVisible
+    local item = items[sel]
+    
+    table.remove(items, sel)
+    sel = sel + 1
+    if sel == #items + 2 then
+      sel = 1
+    end
+    table.insert(items, sel, item)
+    self.selected = sel
+    if sel <= top then
+      self.top = sel - 1
+    elseif sel > top + numVisible then
+      self.top = sel - numVisible
+    end
+    self:invalidate()
+  end
+  
+  function List:moveItemUp()
+    local items = self.items
+    local sel = self.selected
+    local top = self.top
+    local numVisible = self.numVisible
+    local item = items[sel]
+    
+    table.remove(items, sel)
+    sel = sel - 1
+    if sel == 0 then
+      sel = #items + 1
+    end
+    table.insert(items, sel, item)
+    self.selected = sel
+    if sel <= top then
+      self.top = sel - 1
+    elseif sel > top + numVisible then
+      self.top = sel - numVisible
+    end
+    self:invalidate()
+  end
+  
+  function List:change() end
+  function List:onAction() end
+  
+  function List:reset()
+    self.selected = 1
+    self.top = 0
+  end
+  
+end
+
+---------------------
+-- Dropdown Widget --
+---------------------
+local Widget  = gtk.Widget 
+local Widgets = gtk.Widgets 
+
+do Widgets.Dropdown = class(Widget)
+  local Widget      = gtk.Widget 
+  local Dropdown    = Widgets.Dropdown
+  local List        = Widgets.List 
+  local scrollBar   = Widgets.scrollBar
+  local View        = gtk.View
+  
+  Dropdown.defaultStyle = {
+    defaultHeight     = 21,
+    defaultWidth      = 75,
+    defaultListHeight = 40,
+    defaultListWidth  = 75 + 14, -- defaultWidth + 14
+    focusColor        = {40, 148, 184},
+    backgroundColor   = {255, 255, 255},
+    borderColor       = {0, 0, 0},
+    textColor         = {0, 0, 0},
+    selectColor       = {40, 148, 184},
+    disabledTextColor = {255, 255, 255},
+    
+    font = {
+      serif = "sansserif",
+      style = "r",
+      size  = 10
+    }
+  }
+  
+  Dropdown.whenOpenImg  = image.new("\14\0\0\0\7\0\0\0\0\0\0\0\28\0\0\0\16\0\1\000{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239al{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239{\239alalal{\239{\239\255\255\255\255\255\255\255\255\255\255\255\255{\239{\239alalalalal{\239{\239\255\255\255\255\255\255\255\255{\239{\239alalalalalalal{\239{\239\255\255\255\255{\239{\239alalalalalalalalal{\239{\239{\239{\239alalalalalalalalalalal{\239{\239alalalalalal")
+  Dropdown.whenClosedImg = Dropdown.whenOpenImg:rotate(90)
+  
+  function Dropdown:init(arg)
+    local style = arg.style or {} 
+
+    self:setStyle(style)
+    style = self.style
+    self.visible = true
+    self.readOnly = arg.readOnly
+    
+    style.defaultListWidth = arg.style.defaultListWidth or style.defaultWidth + 14
+
+    self.items               = arg.items or {}
+    local items              = self.items
+    self.listHeightSpecified = arg.style and arg.style.defaultListHeight
+    self.value               = (arg.value or items[1]) or ""
+    self.valuen              = #items > 0 and 1 or 0
+    self.rvalue              = self.value
+    self.rvaluen             = self.valuen
+    self.isOpen              = false
+    
+    local dimension = Dimension(style.defaultWidth, style.defaultHeight)
+
+    Widget.init(self, arg.position, dimension) 
+
+  end
+
+  function Dropdown:prepare(gc)
+    local openDown = true -- default
+    local style    = self.style
+    local font     = style.font
+    local items    = self.items
+    
+    -- Get position and size info:
+    local x, y   = self:getPosition()
+    local w, h   = self:getDimension()
+    local px, py = self.parent:getPosition()
+    local pw, ph = self.parent:getDimension()
+
+    -- Check if parent is a ScrollingView
+    if self.parent.isScrollingView then
+      local top = self.parent.top
+      py = py + top
+    end
+    
+    -- Determine size of listView and whether it
+    -- will open upward or downward.  Then 
+    -- define View object:
+    local lvHeight = style.defaultListHeight
+        
+    -- Was a height specified?  If not, size to fit items
+    if not self.listHeightSpecified then
+      local text = items[1] or ""
+      lvHeight = #items * (getTextHeight(text, font) - 1)
+    end
+    
+    local function getMaxListHeight(area)
+      local lineHeight = getTextHeight(items[1], font)
+      local numLines = #items
+      local lvHeight
+      
+      for x = numLines, 1, -1 do
+        lvHeight = x * (lineHeight - 1)
+        if lvHeight <= area then
+          return lvHeight
+        end
+      end
+    end
+    
+    -- Determine open direction:
+    local areaDown = py + ph - (y + h) - 5
+    local areaUp = y - py - 5
+
+    if lvHeight > areaDown then
+      if lvHeight > areaUp then
+        if areaDown > areaUp then
+          lvHeight = getMaxListHeight(areaDown)
+        else
+          lvHeight = getMaxListHeight(areaUp)
+          openDown = false
+        end
+      else
+        openDown = false
+      end
+    end
+
+    local lw = style.defaultListWidth
+
+    -- Now define View and List objects
+    local position
+    if openDown then
+      position = Position{
+        top = "0px",
+        left = "0px",
+        alignment = {
+          { ref = self, side = Position.Sides.Bottom },
+          { ref = self, side = Position.Sides.Left }
+        }
+      }
+    else
+      position = Position{
+        bottom = "0px",
+        left = "0px",
+        alignment = {
+          { ref = self, side = Position.Sides.Top },
+          { ref = self, side = Position.Sides.Left }
+        }
+      }      
+    end
+    
+    self.listView = View{
+      dimension = Dimension(lw, lvHeight),
+      position = position,
+      defaultFocus = 1
+    }
+    function self.listView:onPushed()
+      self.dataParent.isOpen = true
+      self.dataParent.firstRun = true
+    end
+
+    self.List = List{
+      position = Position{
+        top = "0px",
+        left = "0px"
+      },
+      style = {
+        defaultWidth = style.defaultListWidth,
+        defaultHeight = lvHeight,
+        font = style.font
+      },
+      items = self.items
+    }
+    
+    self.listView:addChild(self.List)
+    self.List.dataParent     = self
+    self.listView.dataParent = self
+    
+    -- self.List event redirection
+    self.List.change    = self.ListChange
+    self.List.arrowLeft = self.listArrowLeft
+    self.List.onAction  = self.ListOnAction
+    self.List.escapeKey = self.ListEscapeKey
+  end
+
+  function Dropdown:ListOnAction()
+    -- "self", here, refers to "self.List"
+    local dropdown = self.dataParent
+    local sel = self.selected
+    local value = self.items[sel]
+    
+    dropdown.value = value
+    dropdown.valuen = sel
+    dropdown.rvalue = value
+    dropdown.rvaluen = sel
+    dropdown:close()
+    dropdown:change(sel)
+    dropdown:onAction(value)
+  end
+  
+  function Dropdown:onAction(value) end
+  
+  function Dropdown:ListEscapeKey()
+  -- "self", here, refers to "self.List"
+    local dropdown = self.dataParent
+    self.selected = dropdown.rvaluen
+    dropdown.value = dropdown.rvalue
+    dropdown:close()
+  end
+  
+  function Dropdown:ListChange(a, b)
+    -- "self", here, refers to "self.List"
+    local dropdown = self.dataParent
+    dropdown.value  = b
+    dropdown.valuen = a
+    dropdown:change(a, b)
+    dropdown:invalidate()
+  end
+
+  function Dropdown:listArrowLeft()
+    -- "self", here, refers to "self.List"
+    local dropdown = self.dataParent
+    dropdown.close(dropdown)
+  end
+  
+  function Dropdown:close()
+    self.isOpen = false
+--    if self.isOpen then
+   --   self.isOpen = false
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+--    end
+  end
+  
+  function Dropdown:arrowRight()
+    self:open()
+  end
+
+  function Dropdown:ListArrowLeft()
+    -- "self", here, refers to "self.List"
+    local dropdown = self.dataParent
+    dropdown:close()
+  end
+
+  function Dropdown:mouseUp()
+    self:open()
+  end
+
+  function Dropdown:open()
+    if self.readOnly then
+      return 
+    end
+    self.isOpen = true
+    self.parent:invalidate()
+    gtk.RootScreen:pushScreen(self.listView)
+    
+  end
+
+  function Dropdown:change() end
+
+  function Dropdown:draw(gc, x, y, width, height)
+    if not self.visible then
+      return 
+    end
+    
+    local x = x
+    local y = y
+    local w = width
+    local h = height
+    local style = self.style
+    local font = style.font
+    
+    gc:setColorRGB(unpack(style.backgroundColor))
+    gc:fillRect(x, y, w - 1, h - 1)
+    
+    gc:setColorRGB(unpack(style.borderColor))
+    gc:drawRect(x, y, w - 1, h - 1)
+    
+    if self.hasFocus then
+      gc:setColorRGB(unpack(style.focusColor))
+      gc:drawRect(x - 1, y - 1, w + 1, h + 1)
+    end
+    
+    -- Draw button (todo: make it resizeable)
+    gc:setColorRGB(192, 192, 192)
+    gc:fillRect(x + w - 21, y + 1, 20, 19)
+    gc:setColorRGB(224, 224, 224)
+    gc:fillRect(x + w - 22, y + 1, 1, 19)
+    
+    if self.isOpen then
+      gc:drawImage(self.whenOpenImg, x + w - 18, y + 9)
+    else
+      gc:drawImage(self.whenClosedImg, x + w - 14, y + 3)
+    end
+    
+    if self.disabled then
+      gc:setColorRGB(unpack(style.disabledTextColor))
+    else
+      gc:setColorRGB(unpack(style.textColor))
+    end
+    
+    local text = self.value
+    gc:drawString(gc:textLimit(text, w - 5 - 22), x + 5, y, "top")    
+  end
+end

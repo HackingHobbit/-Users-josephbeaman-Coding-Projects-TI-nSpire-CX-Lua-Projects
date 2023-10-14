@@ -1,0 +1,144 @@
+---------------------
+-- Checkbox widget --
+---------------------
+do gtk.Widgets.Checkbox = class(gtk.Widget)
+  local Widget   = gtk.Widget
+  local Widgets  = gtk.Widgets
+  local Checkbox = Widgets.Checkbox
+
+  Checkbox.defaultStyle = {
+    labelBackgroundColor = false, -- or a RGB color  
+    textColor            = {0, 0 ,0}, 
+    backgroundColor1     = {255, 255, 255}, -- gradient start
+    backgroundColor2     = {150, 200, 243},  -- gradient end
+    borderColor          = {140, 140, 140}, 
+    focusColor           = {40, 148, 184},
+    disabledColor        = {200, 200, 200}, 
+    checkColor           = {50, 70, 70},
+    
+    defaultHeight        = 12, -- Refers to the checkbox without the label
+    defaultWidth         = 12, -- as above
+    font = { 
+      serif = "sansserif", 
+      style = "r", 
+      size  = 10 
+    } 
+  }
+  
+  function Checkbox:init(arg)
+    local style = arg.style or {} 
+    self:setStyle(style)
+    style = self.style 
+    
+    position        = arg.position
+    self.disabled   = arg.disabled or false
+    self.text       = arg.text or false
+    self.visible    = arg.visible or true
+    self.textSide   = arg.textSide or "right" -- "left" is also valid
+    self.value      = arg.value or false
+    
+    local dimension = Dimension(style.defaultWidth, style.defaultHeight) 
+
+    Widget.init(self, arg.position, dimension) 
+  
+  end
+  
+  function Checkbox:draw(gc, x, y, width, height)
+    if not self.visible then
+      return 
+    end
+    
+    local style    = self.style
+    local font     = style.font
+    local color1   = style.backgroundColor1
+    local color2   = style.backgroundColor2
+    local leftEdge = false
+    
+    gc:setColorRGB(unpack(style.borderColor))
+    gc:drawRect(x, y, width, height)
+    
+    for z = y + 1, y + height - 1 do
+      local r = color1[1] - (color1[1] - color2[1])/height * (z-(y+1))
+      local g = color1[2] - (color1[2] - color2[2])/height * (z-(y+1))
+      local b = color1[3] - (color1[3] - color2[3])/height * (z-(y+1))
+  
+      if r < 0 then
+        r = 0
+      elseif r > 255 then
+        r = 255
+      end
+      if g < 0 then
+        g = 0
+      elseif g > 255 then
+        g = 255
+      end
+      if b < 0 then
+        b = 0
+      elseif b > 255 then
+        b = 255
+      end
+      gc:setColorRGB(r, g, b)
+      gc:drawLine(x + 1, z, x + width - 1, z)
+    end
+     
+    if self.disabled then
+      gc:setColorRGB(unpack(style.borderColor))
+      gc:fillRect(x, y, width, height)
+    end    
+    
+    if self.text then
+      if self.disabled then
+        gc:setColorRGB(unpack(style.disabledColor))
+        gc:setFont(font.serif, "i", font.size)
+      else
+        gc:setColorRGB(unpack(style.textColor))
+        gc:setFont(font.serif, font.style, font.size)
+      end
+      if self.textSide == "right" then
+        gc:drawString(self.text, x + width +  7, y - 3, "top")
+      else
+        leftEdge = x - gc:getStringWidth(self.text) - 7
+        gc:drawString(self.text,leftEdge, y - 3, "top")
+        self.leftEdge = leftEdge
+      end
+    end
+    
+    if self.value then
+      gc:setColorRGB(unpack(style.checkColor))
+      gc:setFont(font.serif, "b", font.size)
+      gc:drawString("✓", x + 2, y - 3,"top")
+      gc:setFont(font.serif, font.style, font.size)
+    end
+
+    if self.hasFocus then
+      gc:setColorRGB(unpack(style.focusColor))
+      if not self.text then
+        gc:setPen("medium")
+        gc:drawRect(x - 1, y - 1, width + 2, height + 2)
+      elseif self.textSide == "right" then
+        gc:setPen()
+        local rightEdge = gc:getStringWidth(self.text)
+        self.rightEdge = rightEdge
+        gc:drawRect(x + width + 5, y - 3, rightEdge + 3, height + 6)
+      else
+        gc:setPen()
+        gc:drawRect(leftEdge - 2, y - 3, x - leftEdge - 3, height + 6)
+      end
+    end 
+  end
+
+  function Checkbox:doAction()
+    self.value = not self.value 
+    self.parent:invalidate() 
+    CallEvent(self, "onAction") 
+  end 
+
+  function Checkbox:mouseUp(x, y)
+    self:doAction()
+  end
+  
+  function Checkbox:enterKey()
+    self:doAction()
+  end
+end
+

@@ -1,0 +1,988 @@
+gtk.Views = {} -- Container for custom Views
+
+----------------------- 
+-- Basic Dialog View -- 
+-----------------------
+do 
+  local View = gtk.View 
+
+  do gtk.Views.Dialog = class(View) 
+    local Dialog = gtk.Views.Dialog 
+
+    function Dialog:invalidate() 
+      self.parent:invalidate() 
+    end 
+
+    function Dialog:init(title, position, dimension) 
+      self.title = title 
+      View.init(self, {position=position, dimension=dimension}) 
+      self.backgroundColor = {224, 224, 224}
+    end 
+
+    function Dialog:draw(gc,x, y, width, height) 
+      gc:setFont("sansserif", "r", 10) 
+      --gc:setColorRGB(224, 224, 224) 
+      gc:setColorRGB(unpack(self.backgroundColor))
+      gc:fillRect(x, y, width, height) 
+
+      for i=1, 14, 2 do 
+        gc:setColorRGB(32+i*3, 32+i*4, 32+i*3) 
+        gc:fillRect(x, y + i, width, 2) 
+      end 
+
+      gc:setColorRGB(32+16*3, 32+16*4, 32+16*3) 
+      gc:fillRect(x, y+15, width, 10) 
+
+      gc:setColorRGB(128, 128, 128) 
+      gc:drawRect(x, y, width, height) 
+      gc:drawRect(x-1, y-1, width+2, height+2) 
+
+      gc:setColorRGB(96, 100, 96) 
+      gc:fillRect(x+width+1, y, 1, height+2) 
+      gc:fillRect(x, y+height+2, width+3, 1) 
+
+      gc:setColorRGB(104, 108, 104) 
+      gc:fillRect(x+width+2, y+1, 1, height+2) 
+      gc:fillRect(x+1, y+height+3, width+3, 1) 
+      gc:fillRect(x+width+3, y+2, 1, height+2) 
+      gc:fillRect(x+2, y+height+4, width+2, 1) 
+
+      gc:setColorRGB(255, 255, 255) 
+      gc:drawString(self.title, x+4, y+2, "top") 
+    end 
+  end 
+end 
+
+-------------------
+-- ScrollingView --
+-------------------
+local View    = gtk.View
+
+do gtk.Views.ScrollingView = class(View)
+  local ScrollingView = gtk.Views.ScrollingView
+  local Widgets       = gtk.Widgets
+  local Widget        = gtk.Widget
+  local scrollBar     = Widgets.scrollBar
+
+  function ScrollingView:init(arg)
+    self.borderColor           = arg.borderColor or {0, 0, 0}
+    self.frameBackgroundColor  = arg.frameBackgroundColor or {255, 255, 255}
+    self.frameColor            = arg.frameColor or {0, 0, 0}
+    self.backgroundColor       = arg.backgroundColor or {255, 255, 255}
+    self.xPadding              = arg.xPadding or 5
+    self.yPadding              = arg.yPadding or 5
+    self.maxFrameHeight        = arg.maxFrameHeight
+    self.adjustHeightValue     = arg.adjustHeightValue or 20
+    self.isScrollingView       = true
+    
+    local dimension = arg.dimension or Dimension(318, 212)
+    local position  = arg.position or Position{top = "0px", left = "0px"}
+
+    View.init(self, {position = position, dimension = dimension}) 
+    
+    self.ignoreIfChildHasEvent = false
+    self.defaultFocus = 2
+    self.top = 0
+    
+    self.scrollBar = scrollBar{
+      parent = self,
+      numVisible = self.maxFrameHeight, -- Will be changed at first paint()
+      top = 0,
+      total = self.maxFrameHeight,
+    }
+    self.scrollBar.protected = true
+    
+    function self.scrollBar:onAction(top)
+      self.parent.top = top
+    end
+
+    self:addChild(self.scrollBar)
+  end
+
+  function ScrollingView:paint(gc) 
+    self:prepare(gc)
+
+    local width, height = self:getDimension() 
+    local x, y = self:getPosition() 
+
+    -- Draw frame background
+    gc:setColorRGB(unpack(self.frameBackgroundColor))
+    gc:fillRect(x, y, width, height)
+
+    -- Draw border
+    gc:setColorRGB(unpack(self.borderColor))
+    gc:setPen()
+    gc:drawRect(x, y, width, height) 
+
+    self:draw(gc, x, y, width, height) 
+    
+    -- Calculate widget frame area and position
+    local frameHeight = height - 2 * self.yPadding
+    local frameWidth  = width - 2 * self.xPadding - 14
+    local frameX      = x + self.xPadding 
+    local frameY      = y + self.yPadding 
+
+    -- Draw background
+    gc:setColorRGB(unpack(self.backgroundColor))
+    gc:fillRect(frameX, frameY , frameWidth, frameHeight)
+
+    -- Draw widget frame border
+    gc:setColorRGB(unpack(self.frameColor))
+    gc:setPen()
+    gc:drawRect(frameX, frameY, frameWidth, frameHeight) 
+    
+    self.frameDimension = Dimension(frameWidth, frameHeight)
+
+    self.framePosition = Position{
+      left = frameX,
+      top = frameY - self.top
+    }
+
+    self.scrollBar.position = Position{
+      top = self.yPadding,
+      right = self.xPadding - 2
+    }
+    
+    self.scrollBar.dimension = Dimension(14, frameHeight)
+    self.numVisible = frameHeight
+    self.scrollBar:update(self.top, frameHeight, self.maxFrameHeight)
+
+    self.scrollBar:paint(gc)
+
+    gc:smartClipRect("set", frameX + 1, frameY + 1, frameWidth - 1, frameHeight - 1)
+
+    -- Position and dimension temporarily changed
+    -- for the benefit of the widgets
+    local realDimension = self.dimension
+    local dimension = self.frameDimension
+    self.dimension = dimension
+    
+    local realPosition = self.position
+    local position = self.framePosition
+    self.position = position
+
+    for k, child in ipairs(self.children) do 
+      if not child.protected then -- Scrollbar already painted
+        child:invalidate()
+        child:paint(gc)
+      end
+
+      -- Reset color, pen, and font to default 
+      gc:setColorRGB(0,0,0)
+      gc:setPen()
+      gc:setFont("sansserif", "r", 10)
+    end 
+
+    gc:smartClipRect("restore")
+
+    -- After children painted, restore real settings
+    self.position = realPosition
+    self.dimension = realDimension
+
+    self:postDraw(gc, x, y, width, height) 
+  end 
+
+  function ScrollingView:switchFocus(direction, isChildView, counter)
+    View.switchFocus(self, direction, isChildView, counter)
+    
+    local child = self:getFocusedChild()
+    
+    if not child.ignoreFocus then
+      self:checkChildInView(child)
+    end
+    
+  end
+  
+  function ScrollingView:mouseUp(x, y)
+    --self.scrollBar.mouseUp(self, x, y)
+    self:adjustView()
+    View.mouseUp(self, x, y)
+  end  
+
+  function ScrollingView:adjustView()
+    local function clearChildren(self, parent)
+      local children = parent.children
+      if not children then
+        return 
+      end
+      for k, child in ipairs(children) do
+        if not child.protected then
+          child.position.cachedX = nil
+          child.position.cachedY = nil
+          if child.children then
+            clearChildren(self, child)
+          end
+        end
+      end
+    end
+
+    clearChildren(self, self)
+    self:invalidate()    
+  end
+
+  function ScrollingView:checkChildInView(child)
+    local top            = self.top
+    local x, y           = self:getPosition()
+    local frameY         = y + self.yPadding
+    local height         = self.dimension.cachedHeight
+    local frameHeight    = height - 2 * self.yPadding
+    local childY         = child.position.cachedY
+    local childH         = child.dimension.cachedHeight
+    local maxFrameHeight = self.maxFrameHeight
+    
+    if child.protected then
+      return 
+    end
+    
+    if not childY then
+      return 
+    end
+    
+    if childY < frameY then
+      local move = frameY - childY
+      top = top - move - 2
+      if top < 0 then
+        top = 0
+      end
+      self.top = top
+      self:adjustView()
+
+    elseif (childY + childH) > (frameY + frameHeight) then
+      local move = (childY + childH) - (frameY + frameHeight - 2)
+      top = top + move
+      if top > maxFrameHeight - frameHeight then
+        top = maxFrameHeight - frameHeight
+      end
+      self.top = top
+      self:adjustView()
+
+    end
+  end
+end
+
+--------------------------- 
+-- Scrolling Dialog View -- 
+---------------------------
+do 
+  local ScrollingView = gtk.Views.ScrollingView 
+  local Widgets       = gtk.Widgets
+  local Button        = Widgets.Button
+  
+  do gtk.Views.ScrollingDialog = class(ScrollingView) 
+    local ScrollingDialog = gtk.Views.ScrollingDialog 
+
+    function ScrollingDialog:init(title, position, dimension, maxFrameHeight) 
+      self.title = title 
+      ScrollingView.init(self, {position = position, dimension = dimension, maxFrameHeight = maxFrameHeight }) 
+      self.yPadding = 30
+      self.backgroundColor = {240, 240, 240}
+      self.frameColor = {100, 100, 100}
+      self.defaultFocus = 4
+      
+      self.OK = Button {
+        position = Position {
+          bottom = "1px",
+          right = "3px"
+        },
+        text = "OK",
+        auto = true
+      }
+      self.OK.protected = true
+      --self.OK.onAction() should be defined by user
+      
+      self.Cancel = Button {
+        position = Position {
+          bottom = "1px",
+          right = "5px",
+          alignment = {{ref = self.OK, side = Position.Sides.Left }},
+        },
+        text = "Cancel",
+        auto = true
+      }
+      self.Cancel.protected = true
+      --self.Cancel.onAction() should be defined by user
+      
+      self:addChildren(self.OK, self.Cancel)
+    end 
+    
+    function ScrollingDialog:draw(gc,x, y, width, height) 
+      gc:setFont("sansserif", "r", 10) 
+      gc:setColorRGB(224, 224, 224) 
+
+      gc:fillRect(x, y, width, height) 
+
+      for i=1, 14, 2 do 
+        gc:setColorRGB(32+i*3, 32+i*4, 32+i*3) 
+        gc:fillRect(x, y + i, width, 2) 
+      end 
+
+      gc:setColorRGB(32+16*3, 32+16*4, 32+16*3) 
+      gc:fillRect(x, y+15, width, 10) 
+
+      gc:setColorRGB(128,128,128) 
+      gc:drawRect(x, y, width, height) 
+      gc:drawRect(x-1, y-1, width+2, height+2) 
+
+      gc:setColorRGB(96, 100, 96) 
+      gc:fillRect(x+width+1, y, 1, height+2) 
+      gc:fillRect(x, y+height+2, width+3, 1) 
+
+      gc:setColorRGB(104, 108, 104) 
+      gc:fillRect(x+width+2, y+1, 1, height+2) 
+      gc:fillRect(x+1, y+height+3, width+3, 1) 
+      gc:fillRect(x+width+3, y+2, 1, height+2) 
+      gc:fillRect(x+2, y+height+4, width+2, 1) 
+
+      gc:setColorRGB(255, 255, 255) 
+      gc:drawString(self.title, x+4, y+2, "top") 
+
+      for k, child in ipairs(self.children) do
+        if child.protected and child ~= self.scrollBar then
+          child:paint(gc)
+        end
+      end
+    end 
+  end 
+end 
+
+---------------------
+-- SelectDate View --
+---------------------
+local Dialog = gtk.Views.Dialog
+do gtk.Views.SelectDate = class(Dialog)
+  
+  local SelectDate = gtk.Views.SelectDate
+  local monthNames = gtk.tools.constants.monthNames
+  local Dropdown   = gtk.Widgets.Dropdown
+  local Input      = gtk.Widgets.Input
+  local date       = gtk.tools.date
+  local Button     = gtk.Widgets.Button
+    
+  function SelectDate:init(title, startDate, callback)
+    local position = Position {
+      top = "5px", left = "20%"
+    }
+    local dimension = Dimension("60%", 190)
+    
+    self.currentDate = startDate
+    self.callback = callback
+    
+    Dialog.init(self, title, position, dimension)
+    
+    local month, day, year = date.split(self.currentDate)
+    
+    local drpMonth = Dropdown{
+      position = Position{
+        top = "28px", left = "20px"
+      },
+      items = monthNames,
+      value = monthNames[month],
+      style = {
+        defaultWidth = 100
+      }
+    }
+    
+    function drpMonth:change()
+      local m, d, y = date.split(self.parent.currentDate)
+      local m = self.valuen
+      local max = date.numDays(m, y)
+      
+      if d > max then
+        d = max
+      end
+      
+      self.parent.currentDate = date.concat(m, d, y)
+    end    
+
+    local txtYear = Input{
+      position = Position{
+        top = "0px", left = "10", alignment = {
+          { ref = drpMonth, side = Position.Sides.Right },
+          { ref = drpMonth, side = Position.Sides.Top }
+        }
+      },
+      value = year,
+      number = true,
+      style = {
+        defaultWidth = 40
+      }
+    }
+    function txtYear:onValueChange()
+      local m, d, y = date.split(self.parent.currentDate)
+      local y = self.value
+      local max = date.numDays(m, y)
+      
+      if d > max then
+        d = max
+      end
+      
+      self.parent.currentDate = date.concat(m, d, y)
+    end
+
+    local cmdOK = Button{
+      position = Position{
+        bottom = "2px",
+        right = "8px"
+      },
+      text = "OK",
+      auto = true,
+      style = {
+        defaultHeight = 18,
+        font = {
+          size = 8
+        }
+      }
+    }
+    function cmdOK:onAction()
+      local cb = self.parent.callback
+      local d  = self.parent.currentDate
+      
+      gtk.RootScreen:popScreen()
+      if not cb then
+        return 
+      elseif type(cb) == "function" then
+        cb(d)
+      else
+        cb.value = d
+      end
+    end
+    
+    local cmdCancel = Button{
+      position = Position{
+        bottom = "2px",
+        right = "37px"
+      },
+      text = "Cancel",
+      auto = true,
+      style = {
+        defaultHeight = 18,
+        font = {
+          size = 8
+        }
+      }
+    }
+    function cmdCancel:onAction()
+      gtk.RootScreen:popScreen()
+    end
+
+    self:addChildren(drpMonth, txtYear, cmdOK, cmdCancel)    
+  end
+
+  function SelectDate:onPushed()
+    timer.start(.5)
+  end
+    
+  function SelectDate:timer()
+    self.showCursor = not self.showCursor
+    self:invalidate()
+  end
+  
+  function SelectDate:draw(gc, x, y, width, height) 
+    Dialog.draw(self, gc, x, y, width, height)
+    
+    local y = y + 50
+    local x = x + 10
+    local dayLabels = {"S", "M", "T", "W", "T", "F", "S"}
+    
+    gc:setFont("serif", "b", 10)
+    gc:setColorRGB(100, 0, 0)
+    
+    for day = 1, 7 do
+      gc:drawString(dayLabels[day], x + 25 * (day - 1) + 7, y, "top")
+    end
+
+    y = y + 15
+    local m, d, yr = date.split(self.currentDate)
+    local weekDay = date.getFirstDay(m, yr)
+    local lastDay = date.numDays(m, yr)
+    local week = 1 
+    
+    for day = 1, lastDay do
+      if weekDay > 7 then
+        weekDay = 1
+        week = week + 1
+      end
+      
+      gc:setColorRGB(250, 255, 255)
+      gc:fillRect(x + 25 * (weekDay - 1) - 2, y + 20 * (week - 1) + 1, 24, 19)
+      
+      gc:setColorRGB(0, 0, 100)
+      gc:drawString(tostring(day), x + 25 * (weekDay - 1) + 2, y + 20 * (week - 1), "top")
+      gc:setColorRGB(100, 0, 0)
+      gc:drawRect(x + 25 * (weekDay - 1) - 3, y + 20 * (week - 1), 25, 20)
+      
+      if self.showCursor and d == day then
+        gc:setColorRGB(0, 0, 100)
+        gc:fillRect(x + 25 * (weekDay - 1) - 2, y + 20 * (week - 1) + 1, 24, 19)
+        gc:setColorRGB(255, 255, 255)
+        gc:drawString(tostring(day), x + 25 * (weekDay - 1) + 2, y + 20 * (week - 1), "top")
+        gc:setColorRGB(100, 0, 0)
+      end
+      
+      weekDay = weekDay + 1
+      
+    end
+
+    if week == 4 then
+      self.dimension = Dimension(width, 170)
+      self.parent:invalidate()
+    elseif week == 5 then
+      self.dimension = Dimension(width, 187)
+      self.parent:invalidate()
+    else 
+      self.dimension = Dimension(width, 190)
+      self.parent:invalidate()      
+    end
+  end
+  
+  function SelectDate:mouseUp(mX, mY)
+    Dialog.mouseUp(self, mX, mY)
+    
+    local x, y = self:getPosition()
+    y = y + 65
+    x = x + 10
+    
+    local currentDate = self.currentDate
+    local m, d, yr = date.split(currentDate)
+    local weekDay = date.getFirstDay(m, yr)
+    local lastDay = date.numDays(m, yr)
+    local week = 1 
+
+    for day = 1, lastDay do
+      local dX = x + 25 * (weekDay - 1) - 3
+      local dY = y + 20 * (week - 1)
+      
+      if mX >= dX and mX <= dX + 25 and mY >= dY and mY <= dY + 20 then
+        d = day
+        break
+      end
+      
+      weekDay = weekDay + 1
+      if weekDay > 7 then
+        weekDay = 1
+        week = week + 1
+      end
+    end
+
+    self.currentDate = date.concat(m, d, yr)
+  end
+
+  function SelectDate:arrowRight()
+    local childHasFocus = self:getFocusedChild()
+    local date = gtk.tools.date
+    local d = self.currentDate
+    
+    if childHasFocus then
+      View.arrowRight(self)
+    else
+      self.currentDate = date.addDays(d, 1)
+      local m, d, y = date.split(self.currentDate)
+      self.children[1].value = monthNames[m]
+      self.children[2].value = y
+      self:invalidate()
+    end
+  end
+  
+  function SelectDate:arrowLeft()
+    local childHasFocus = self:getFocusedChild()
+    local date = gtk.tools.date
+    local d = self.currentDate
+    
+    if childHasFocus then
+      View.arrowLeft(self)
+    else
+      self.currentDate = date.subtractDays(d, 1)
+      local m, d, y = date.split(self.currentDate)
+      self.children[1].value = monthNames[m]
+      self.children[2].value = y
+      self:invalidate()
+    end
+  end
+
+  function SelectDate:arrowUp()
+    local childHasFocus = self:getFocusedChild()
+    local date = gtk.tools.date
+    local d = self.currentDate
+    
+    if childHasFocus then
+      View.arrowUp(self)
+    else
+      self.currentDate = date.subtractDays(d, 7)
+      local m, d, y = date.split(self.currentDate)
+      self.children[1].value = monthNames[m]
+      self.children[2].value = y
+      self:invalidate()
+    end
+  end
+  
+  function SelectDate:arrowDown()
+    local childHasFocus = self:getFocusedChild()
+    local date = gtk.tools.date
+    local d = self.currentDate
+    
+    if childHasFocus then
+      View.arrowDown(self)
+    else
+      self.currentDate = date.addDays(d, 7)
+      local m, d, y = date.split(self.currentDate)
+      self.children[1].value = monthNames[m]
+      self.children[2].value = y
+      self:invalidate()
+    end
+  end  
+end
+
+function gtk.showSelectDate(title, startDate, callback)
+  local dialog = gtk.Views.SelectDate(title, startDate, callback)
+  gtk.RootScreen:pushScreen(dialog)
+  gtk.RootScreen:invalidate()
+end
+
+---------------------
+-- MessageBox View --
+---------------------
+do 
+  local Dialog = gtk.Views.Dialog
+  local Editor = gtk.Widgets.Editor
+  local Button = gtk.Widgets.Button
+  
+  gtk.Views.MessageBox = class(Dialog)
+  local MessageBox = gtk.Views.MessageBox
+  
+  function MessageBox:init(title, message, callback)
+    local position = Position{
+      top = "20%", left = "10%"
+    }
+    
+    local dimension = Dimension("80%", "50%")
+    
+    Dialog.init(self, title, position, dimension)
+    
+    local edtMessage = Editor {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      style = {
+        font = {
+          size = 10
+        },
+        defaultWidth = 244,
+        defaultHeight = 40,
+        backgroundColor = {230, 230, 230},
+        focusColor = {0, 0, 0},
+        cursorColor = {0, 0, 0}
+      },
+      value = message,
+      readOnly = true,
+    }
+    
+    local cmdOK = Button {
+      position = Position {
+        bottom = "3px", left = "45%"
+      },
+      auto = true,
+      text = "OK"
+    }
+    function cmdOK:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+      if callback then
+        callback()
+      end
+    end
+    
+    self.defaultFocus = 1
+    
+    self:addChildren(edtMessage, cmdOK)
+  end
+end  
+
+function gtk.showMessageBox(title, message, callback)
+  local dialog = gtk.Views.MessageBox(title, message, callback)
+  gtk.RootScreen:pushScreen(dialog)
+  gtk.RootScreen:invalidate()
+end
+
+--------------------------
+-- ConfirmationBox View --
+--------------------------
+do 
+  local Dialog = gtk.Views.Dialog
+  local Editor = gtk.Widgets.Editor
+  local Button = gtk.Widgets.Button
+  
+  gtk.Views.ConfirmationBox = class(Dialog)
+  local ConfirmationBox = gtk.Views.ConfirmationBox
+  
+  function ConfirmationBox:init(title, message, callback, callbackArgs)
+    local position = Position{
+      top = "20%", left = "10%"
+    }
+    
+    local dimension = Dimension("80%", "50%")
+    
+    Dialog.init(self, title, position, dimension)
+    
+    local edtMessage = Editor {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      style = {
+        font = {
+          size = 10
+        },
+        defaultWidth = 244,
+        defaultHeight = 40,
+        backgroundColor = {230, 230, 230},
+        focusColor = {0, 0, 0},
+        cursorColor = {0, 0, 0}
+      },
+      value = message,
+      readOnly = true,
+    }
+    
+    local cmdOK = Button {
+      position = Position {
+        bottom = "3px", left = "35%"
+      },
+      auto = true,
+      text = "OK"
+    }
+    function cmdOK:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+      if callback then
+        callback(callbackArgs)
+      end
+    end
+    
+    local cmdCancel = Button {
+      position = Position {
+        bottom = "3px", left = "5px", alignment = {
+          { ref = cmdOK, side = Position.Sides.Right }
+        }
+      },
+      auto = true,
+      text = "Cancel"
+    }
+    function cmdCancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+    
+    self.defaultFocus = 1
+    
+    self:addChildren(edtMessage, cmdOK, cmdCancel)
+  end
+  
+end
+
+function gtk.showConfirmationBox(title, message, callback, callbackArgs)
+  local dialog = gtk.Views.ConfirmationBox(title, message, callback, callbackArgs)
+  gtk.RootScreen:pushScreen(dialog)
+  gtk.RootScreen:invalidate()
+end
+
+------------------
+-- ListBox View --
+------------------
+do 
+  local Dialog = gtk.Views.Dialog
+  local List   = gtk.Widgets.List
+  local Button = gtk.Widgets.Button
+  
+  gtk.Views.ListBox = class(Dialog)
+  local ListBox = gtk.Views.ListBox
+  
+  function ListBox:init(title, options, callback)
+    local position = Position{
+      top = "19%", left = "10%"
+    }
+    
+    local dimension = Dimension("80%", "60%")
+    
+    Dialog.init(self, title, position, dimension)
+    
+    self.lstOptions = List {
+      position = Position {
+        top = "30px", left = "5px"
+      },
+      style = {
+        font = {
+          size = 10
+        },
+        defaultWidth = 244,
+        defaultHeight = 60,
+        backgroundColor = {230, 230, 230},
+        focusColor = {0, 0, 0},
+        
+      },
+      items = options or {},
+    }
+    
+    self.cmdOK = Button {
+      position = Position {
+        bottom = "3px", right = "5px"
+      },
+      auto = true,
+      text = "OK"
+    }
+    function self.cmdOK:onAction()
+      local sel = self.parent.lstOptions.selected
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+      if callback then
+        callback(sel)
+      end
+    end
+    
+    self.cmdCancel = Button {
+      position = Position {
+        bottom = "3px", right = "5px", alignment = {
+          { ref = self.cmdOK, side = Position.Sides.Left }
+        }
+      },
+      auto = true,
+      text = "Cancel"
+    }
+    function self.cmdCancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+    
+    self.defaultFocus = 1
+    
+    self:addChildren(self.lstOptions, self.cmdOK, self.cmdCancel)
+  
+  end
+
+  function ListBox:prepare(gc)
+    local font       = self.lstOptions.style.font
+    local lines      = self.lstOptions.items
+    local maxWidth   = 60
+    local lstW, lstH = self.lstOptions:getDimension()
+    local w, h       = self:getDimension()
+    
+    gc:setFont(font.serif, font.style, font.size)
+    
+    local width = gc:getStringWidth(self.title)
+    if width > maxWidth then
+        maxWidth = width
+      end
+    for x = 1, #lines do
+      width = gc:getStringWidth(lines[x])
+      if width > maxWidth then
+        maxWidth = width
+      end
+    end
+    if maxWidth > 270 then
+      maxWidth = 270
+    end
+
+    local x, y = self:getPosition()
+    x = (318 - maxWidth - 40 - 5)/2 + 1
+    self.position = Position{ top = y, left = x }
+    
+    self.lstOptions.dimension = Dimension(maxWidth + 30, lstH)
+    self.dimension = Dimension(maxWidth + 40, h)
+  end    
+end
+
+function gtk.showListBox(title, options, callback)
+  local dialog = gtk.Views.ListBox(title, options, callback)
+  gtk.RootScreen:pushScreen(dialog)
+  gtk.RootScreen:invalidate()
+end
+
+-------------------------
+-- CheckOptionBox View --
+-------------------------
+do 
+  local ScrollingDialog = gtk.Views.ScrollingDialog
+  local Checkbox        = gtk.Widgets.Checkbox
+  local Button          = gtk.Widgets.Button
+  
+  gtk.Views.CheckOptionBox = class(ScrollingDialog)
+  local CheckOptionBox = gtk.Views.CheckOptionBox
+  
+  function CheckOptionBox:init(title, options, callback, defaults)
+    local position = Position{
+      top = "19%", left = "10%"
+    }
+    
+    local dimension = Dimension("80%", "60%")
+    local default = defaults or {}
+    
+    ScrollingDialog.init(self, title, position, dimension, 200)
+    self.options = options
+    
+    self.chkOption = {}
+    for x = 1, #options do
+      self.chkOption[x] = Checkbox {
+        position = Position {
+          top = 20 * (x - 1) + 7 .. "px", left = "5px"
+        },
+        text = options[x],
+        value = default[x]
+      }
+      self:addChild(self.chkOption[x])
+    end
+    
+    function self.OK:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+      local chks = self.parent.chkOption
+      local values = {}
+      for x = 1, #chks do
+        values[x] = chks[x].value
+      end
+      if callback then
+        callback(values)
+      end
+    end
+    
+    function self.Cancel:onAction()
+      gtk.RootScreen:popScreen()
+      gtk.RootScreen:invalidate()
+    end
+  end
+
+  function CheckOptionBox:prepare(gc)
+    local lines      = self.options
+    local maxWidth   = 60
+    local w, h       = self:getDimension()
+    
+    gc:setFont("sansserif", "r", 10)
+    
+    local width = gc:getStringWidth(self.title)
+    if width > maxWidth then
+        maxWidth = width
+      end
+    for x = 1, #lines do
+      width = gc:getStringWidth(lines[x])
+      if width > maxWidth then
+        maxWidth = width
+      end
+    end
+    maxWidth = maxWidth + 20
+    if maxWidth > 270 then
+      maxWidth = 270
+    end
+    w = maxWidth + 40
+    self.maxFrameHeight = 10 + 20 * #lines
+    
+    if self.maxFrameHeight + 60 > h then
+      h = self.maxFrameHeight + 60
+    end
+    if h > 200 then
+      h = 200
+    end
+    
+    local x, y = self:getPosition()
+    x = (318 - maxWidth - 40 - 5)/2 + 1
+    y = (212 - h)/2 - 2
+    self.position = Position{ top = y, left = x }
+    
+    self.dimension = Dimension(w, h)
+  end
+end

@@ -1,0 +1,897 @@
+-----------------
+-- WidgetGroup --
+-----------------
+--  A "WidgetGroup" is a group of Widgets, defined
+-- as a class, so that they can be added to a View
+-- and utilized as a single group.
+
+-- xxx Note the differences between the base
+-- WidgetGroup class and the DateGroup class!
+do gtk.WidgetGroup = class()
+    local WidgetGroup = gtk.WidgetGroup
+    local View        = gtk.View
+    
+    function WidgetGroup:init(position)
+      self.position = position
+    end
+    
+    function WidgetGroup:addChildrenTo(children, parentView)
+      self.children = children
+      self.parentView = parentView
+      
+      local child = children[1]
+      child.position = self.position
+      for x = 1, #children do
+        local child = children[x]
+        child.groupParent = self
+      end
+      
+      parentView:addChildren(unpack(children))
+    end
+  end
+  
+  -- Container:
+  gtk.WidgetGroups = {}
+  
+  ---------------
+  -- DateGroup --
+  ---------------
+  -- Usage:  Create an instance of this class,
+  -- such as dueDate = gtk.WidgetGroups.DateGroup(position, parentView, defaultDate)
+  -- The above statement will create the group AND
+  -- add its Widgets to View, parentView.
+  -- To set or get a value to/from the "group",
+  -- "getValue" and "setValue" methods are given.
+  -- (i.e. dueDate:getValue(), dueDate:setValue("1/1/2022") ) 
+  do
+    local date   = gtk.tools.date
+    local Input  = gtk.Widgets.Input
+    local Label  = gtk.Widgets.Label
+    local Button = gtk.Widgets.Button
+    local date   = gtk.tools.date
+  
+    -- Define the new WidgetGroup class:
+    do gtk.WidgetGroups.DateGroup = class(gtk.WidgetGroup)
+      local DateGroup = gtk.WidgetGroups.DateGroup
+          
+      function DateGroup:init(position, parentView, defaultDate, allowBlankDate)
+        gtk.WidgetGroup.init(self, position)
+        
+        -- Define Widgets included in the group:
+        local txtMonth = Input {
+          position = Position {
+            top = "0px", left = "0px"
+          },
+          number = true,
+          style = {
+            defaultWidth = 20,
+            disabledTextColor = {255, 255, 255}
+          }
+        }
+        
+        local lblDivide1 = Label {
+          position = Position {
+            top = "-4px", left = "2px", alignment = {
+              {ref = txtMonth, side = Position.Sides.Top},
+              {ref = txtMonth, side = Position.Sides.Right}
+            }
+          },
+          text = "/",
+          style = {
+            font = {
+              size = 14
+            }
+          }
+        }
+      
+        local txtDay = Input {
+          position = Position {
+            top = "4px", left = "1px", alignment = {
+              { ref = lblDivide1, side = Position.Sides.Top},
+              { ref = lblDivide1, side = Position.Sides.Right}
+            }
+          },
+          number = true,
+          style = {
+            defaultWidth = 20,
+            disabledTextColor = {255, 255, 255}
+          }
+        }
+        
+        local lblDivide2 = Label {
+          position = Position {
+            top = "-4px", left = "2px", alignment = {
+              {ref = txtDay, side = Position.Sides.Top},
+              {ref = txtDay, side = Position.Sides.Right}
+            }
+          },
+          text = "/",
+          style = {
+            font = {
+              size = 14
+            }
+          }
+        }
+      
+        local txtYear = Input {
+          position = Position {
+            top = "4px", left = "1px", alignment = {
+              { ref = lblDivide2, side = Position.Sides.Top},
+              { ref = lblDivide2, side = Position.Sides.Right}
+            }
+          },
+          style = {
+            defaultWidth = 35,
+            disabledTextColor = {255, 255, 255}
+          },
+          number = true
+        }
+         
+        local cmdShowCalendar = Button {
+          position = Position {
+            top = "0px", left = "2px", alignment = {
+              {ref = txtYear, side = Position.Sides.Top},
+              {ref = txtYear, side = Position.Sides.Right}
+            }
+          },
+          text = "",
+          style = {
+            defaultWidth = 8,
+            defaultHeight = 21,
+            backgroundColor = {0, 0, 150}      
+          }
+        }
+        function cmdShowCalendar:onAction()
+          local parent = self.groupParent
+          local dateStr  = parent:getValue() or parent.defaultDate
+          if not dateStr then
+            dateStr = "05/05/2021"
+          end
+          
+          local dateView = gtk.Views.SelectDate("Select Date...", dateStr, function (x) parent:setValue(x) end )
+          
+          gtk.RootScreen:pushScreen(dateView)      
+        end
+  
+        cmdShowCalendar.groupParent = self
+          
+        local children = {txtMonth, lblDivide1, txtDay, lblDivide2, txtYear, cmdShowCalendar}
+        self.children = children
+        self.parentView = parentView
+        self.allowBlankDate = allowBlankDate
+        
+        if defaultDate then
+          self:setValue(defaultDate)
+        end
+        
+        self:addChildrenTo(children, parentView)
+      end
+      
+      function DateGroup:getValue()
+        local children = self.children
+        local m = children[1].value
+        local d = children[3].value
+        local y = children[5].value
+        
+        if date.checkDate(m, d, y) then
+          return date.concat(m, d, y)
+        else
+          return false
+        end
+      end
+      
+      function DateGroup:setValue(dateStr)
+        local m, d, y
+        
+        if self.allowBlankDate and not dateStr then
+          m, d, y = "", "", ""
+        elseif not dateStr or type(dateStr) ~= "string" then
+          return 
+        else
+          m, d, y = date.split(dateStr)
+          if not date.checkDate(m, d, y) then
+            return
+          end
+        end
+  
+        local children = self.children
+        
+        children[1]:setValue(m)
+        children[3]:setValue(d)
+        children[5]:setValue(y)
+      end
+      
+      function DateGroup:enable()
+        local children = self.children
+        
+        children[1]:enable()
+        children[3]:enable()
+        children[5]:enable()
+        children[6]:enable()
+        
+      end
+      
+      function DateGroup:disable()
+        local children = self.children
+        
+        children[1]:disable()
+        children[3]:disable()
+        children[5]:disable()
+        children[6]:disable()
+        
+      end      
+    end  
+  end
+  
+  ---------------
+  -- TimeGroup --
+  ---------------
+  -- Usage:  Create an instance of this class,
+  -- such as startTime = gtk.WidgetGroups.TimeGroup(position, parentView, defaultTime)
+  -- The above statement will create the group AND
+  -- add its Widgets to View, parentView.
+  -- To set or get a value to/from the "group",
+  -- "getValue" and "setValue" methods are given.
+  -- (i.e. startTime:getValue(), startTime:setValue("1/1/2022") ) 
+  do
+    local time     = gtk.tools.time
+    local Input    = gtk.Widgets.Input
+    local Label    = gtk.Widgets.Label
+    local Dropdown = gtk.Widgets.Dropdown
+  
+    -- Define the new WidgetGroup class:
+    do gtk.WidgetGroups.TimeGroup = class(gtk.WidgetGroup)
+      local TimeGroup = gtk.WidgetGroups.TimeGroup
+          
+      function TimeGroup:init(position, parentView, defaultTime, allowBlankDate)
+        gtk.WidgetGroup.init(self, position)
+        
+        -- Define Widgets included in the group:
+        local txtHour = Input {
+          position = Position {
+            top = "0px", left = "0px"
+          },
+          number = true,
+          format = "%02d",
+          style = {
+            defaultWidth = 18,
+            disabledTextColor = {255, 255, 255}
+          }
+        }
+        
+        local lblColon = Label {
+          position = Position {
+            top = "-6px", left = "1px", alignment = {
+              {ref = txtHour, side = Position.Sides.Top},
+              {ref = txtHour, side = Position.Sides.Right}
+            }
+          },
+          text = ":",
+          style = {
+            font = {
+              size = 14
+            }
+          }
+        }
+      
+        local txtMinute = Input {
+          position = Position {
+            top = "6px", left = "0px", alignment = {
+              { ref = lblColon, side = Position.Sides.Top},
+              { ref = lblColon, side = Position.Sides.Right}
+            }
+          },
+          number = true,
+          format = "%02d",
+          style = {
+            defaultWidth = 18,
+            disabledTextColor = {255, 255, 255}
+          }
+        }
+        
+        local drpMeridian = Dropdown {
+          position = Position {
+            top = "0px", left = "2px", alignment = {
+              { ref = txtMinute, side = Position.Sides.Top},
+              { ref = txtMinute, side = Position.Sides.Right}
+            }
+          },
+          style = {
+            defaultWidth = 50,
+          },
+          items = {"AM", "PM"}
+        }
+  
+        local children = {txtHour, lblColon, txtMinute, drpMeridian}
+        self.children = children
+        self.parentView = parentView
+        self.allowBlankTime = allowBlankTime
+        
+        if defaultTime then
+          self:setValue(defaultTime)
+        end
+        
+        self:addChildrenTo(children, parentView)
+      end
+      
+      function TimeGroup:getValue()
+        local children = self.children
+        local h  = children[1].value
+        local m  = children[3].value
+        local mm = children[4].value
+        
+        if time.checkTime(h, m, mm) then
+          return time.concat(h, m, mm)
+        else
+          return false
+        end
+      end
+      
+      function TimeGroup:setValue(timeStr)
+        local h, m, mm
+        
+        if self.allowBlankTime and not timeStr then
+          h, m, mm = "", "", ""
+        elseif not timeStr or type(timeStr) ~= "string" then
+          return 
+        else
+          h, m, mm = time.split(timeStr)
+          if not time.checkTime(h, m, mm) then
+            return
+          end
+        end
+  
+        local children = self.children
+        
+        children[1]:setValue(h)
+        children[3]:setValue(m)
+        children[4].value = mm
+      end
+      
+      function TimeGroup:enable()
+        local children = self.children
+        
+        children[1]:enable()
+        children[3]:enable()
+        children[4]:enable()
+        
+      end
+      
+      function TimeGroup:disable()
+        local children = self.children
+        
+        children[1]:disable()
+        children[3]:disable()
+        children[4]:disable()
+        
+      end      
+    end  
+  end
+  
+  ----------------------------------
+  -- Color Selection Widget Group --
+  ----------------------------------
+  do
+    local Widget  = gtk.Widget 
+    local Widgets = gtk.Widgets 
+  
+    local Input     = Widgets.Input
+    local Label     = Widgets.Label
+    local mathTools = gtk.mathTools
+  --local newColor  = {0, 0, 0}
+  
+    ------------------------- 
+    -- Color Slider Widget -- 
+    -------------------------   
+    do Widgets.ColorSlider = class(Widget)
+      local ColorSlider = Widgets.ColorSlider 
+  
+      ColorSlider.defaultStyle = { 
+        focusColor      = {50,150,190},
+        defaultWidth  = 72, 
+        defaultHeight = 24
+      } 
+  
+      function ColorSlider:init(arg) 
+        self.color = arg.color or "red"
+        self.value = arg.value or 0
+        
+        local style = arg.style or {} 
+        self:setStyle(style)
+        style = self.style
+  
+        local dimension = Dimension(style.defaultWidth, style.defaultHeight) 
+  
+        Widget.init(self, arg.position, dimension) 
+        
+        self.visible = true
+        
+      end 
+  
+      function ColorSlider:draw(gc, x, y, width, height) 
+        local style = self.style
+        local value = self.value
+        local newColor = self.groupParent.newColor
+  
+        if not self.visible then
+          return 
+        end
+  
+        if self.hasFocus then
+          gc:setColorRGB(unpack(style.focusColor))
+          gc:fillRect(x - 2, y - 2, width, height)
+        end
+        gc:setColorRGB(0,0,0)
+        gc:fillRect(x, y, width - 4, height - 4)
+        for i = 0, width - 9 do -- todo: make it so this works with different widths
+          gc:setColorRGB(self.color == "red" and i*255/width or newColor[1], self.color == "green" and i*255/width or newColor[2], self.color == "blue" and i*255/width or newColor[3])
+          gc:fillRect(x + i + 2, y + 2, 1, height - 8)
+        end
+        gc:setColorRGB(255 - value, 255 - value, 255 - value)
+    
+        gc:fillRect(x + value/4 + 1,y - 2, 3, height)      
+        
+      end 
+  
+      function ColorSlider:arrowRight()
+        self.value = self.value < 250 and self.value + 5 or 255
+        self:doAction()
+      end
+      
+      function ColorSlider:arrowLeft()
+        self.value = self.value > 5 and self.value - 5 or 0
+        self:doAction()
+      end
+  
+      function ColorSlider:doAction() 
+        self:invalidate() 
+        CallEvent(self, "onAction") 
+      end 
+  
+      function ColorSlider:onMouseDown(mx, my) 
+        local w, h = self:getDimension()
+        local x, y = self:getPosition()
+  
+        if mx > x and mx < x + w and my > y and my < y + h then
+          self.value = math.floor((mx - x)/w * 255)
+          self:doAction()
+        else
+          self.parent.mouseDown(self, mx, my)
+        end
+      end
+       
+    end 
+      
+    -- Define the new WidgetGroup class:
+    do gtk.WidgetGroups.ColorGroup = class(gtk.WidgetGroup)
+      local ColorGroup  = gtk.WidgetGroups.ColorGroup
+      local ColorSlider = gtk.Widgets.ColorSlider
+      
+      function ColorGroup:init(position, parentView, defaultColor)
+        gtk.WidgetGroup.init(self, position)
+        self.newColor = defaultColor or {255, 255, 255}
+        local newColor = self.newColor
+        
+        -- Define Widgets included in the group:
+        self.csRed = gtk.Widgets.ColorSlider{
+          position = Position {
+            top = "50px", left = "50px"
+          },
+          value = newColor[1],
+          color = "red",
+          style = {
+            defaultHeight = 20
+          }
+        }
+        
+        self.lblRed = Label {
+          position = Position {
+            top = "0px", right = "0px", alignment = {
+              {ref = self.csRed, side = Position.Sides.Top },
+              {ref = self.csRed, side = Position.Sides.Left }
+            }
+          },
+          text = "Red: "
+        }
+  
+        self.txtRed = Input {
+          position = Position {
+            top = "0px", left = "0px", alignment = {
+              {ref = self.csRed, side = Position.Sides.Top },
+              {ref = self.csRed, side = Position.Sides.Right }
+            }
+          },
+          value = self.csRed.value,
+          number = true,
+          style = {
+            defaultHeight = 15,
+            defaultWidth = 25
+          }
+        }
+        
+        self.csGreen = gtk.Widgets.ColorSlider{
+          position = Position {
+            top = "2px", left = "0px", alignment = {
+              { ref = self.csRed, side = Position.Sides.Bottom },
+              { ref = self.csRed, side = Position.Sides.Left }
+            }
+          },
+          value = newColor[2],
+          color = "green",
+          style = {
+            defaultHeight = 20
+          }
+        }
+        
+        self.lblGreen = Label {
+          position = Position {
+            top = "0px", right = "0px", alignment = {
+              {ref = self.csGreen, side = Position.Sides.Top },
+              {ref = self.csGreen, side = Position.Sides.Left }
+            }
+          },
+          text = "Green: "
+        }
+        
+        self.txtGreen = Input {
+          position = Position {
+            top = "0px", left = "0px", alignment = {
+              {ref = self.csGreen, side = Position.Sides.Top },
+              {ref = self.csGreen, side = Position.Sides.Right }
+            }
+          },
+          value = self.csGreen.value,
+          number = true,
+          style = {
+            defaultHeight = 15,
+            defaultWidth = 25
+          }
+        }
+        
+        self.csBlue = gtk.Widgets.ColorSlider{
+          position = Position {
+            top = "2px", left = "0px", alignment = {
+              { ref = self.csGreen, side = Position.Sides.Bottom },
+              { ref = self.csGreen, side = Position.Sides.Left }
+            }
+          },
+          value = newColor[3],
+          color = "blue",
+          style = {
+            defaultHeight = 20
+          }
+        }
+        
+        self.lblBlue = Label {
+          position = Position {
+            top = "0px", right = "0px", alignment = {
+              {ref = self.csBlue, side = Position.Sides.Top },
+              {ref = self.csBlue, side = Position.Sides.Left }
+            }
+          },
+          text = "Blue: "
+        }
+        
+        self.txtBlue = Input {
+          position = Position {
+            top = "0px", left = "0px", alignment = {
+              {ref = self.csBlue, side = Position.Sides.Top },
+              {ref = self.csBlue, side = Position.Sides.Right }
+            }
+          },
+          value = self.csBlue.value,
+          number = true,
+          style = {
+            defaultHeight = 15,
+            defaultWidth = 25
+          }
+        }
+        
+        self.txtHex = Input {
+          position = Position {
+            top = "0px", left = "5px", alignment = {
+              {ref = self.txtBlue, side = Position.Sides.Top },
+              {ref = self.txtBlue, side = Position.Sides.Right }
+            }
+          },
+          value = mathTools.color2Hex(newColor),
+          style = {
+            defaultHeight = 15,
+            defaultWidth = 52
+          }
+        }
+        
+        self.lblHex = Label {
+          position = Position {
+            bottom = "0px", left = "0px", alignment = {
+              { ref = self.txtHex, side = Position.Sides.Top },
+              { ref = self.txtHex, side = Position.Sides.Left }
+            }
+          },
+          center = true,
+          text = "Hex Value:",
+          style = {
+            defaultWidth = 52,
+            defaultHeight = 12,
+            font = {
+              size = 8
+            }
+          }
+        }
+        
+        self.lblColor = Label {
+          position = Position {
+            top = "0px", right = "0px", alignment = {
+              { ref = self.txtRed, side = Position.Sides.Top },
+              { ref = self.txtHex, side = Position.Sides.Right }
+            }
+          },
+          color = newColor,
+          style = {
+            defaultWidth = 52,
+            defaultHeight = 30
+          }
+        }
+  
+        -- Widget Methods:
+        function ColorSlider:onAction()
+          local colors = Enum({"red", "green", "blue"})
+          local color  = colors[self.color]
+          local group  = self.groupParent
+          
+          group.newColor[color] = self.value
+          group.txtRed.value    = group.newColor[1]
+          group.txtGreen.value  = group.newColor[2]
+          group.txtBlue.value   = group.newColor[3]
+          group.txtHex.value    = mathTools.color2Hex(group.newColor)
+          
+          gtk.RootScreen:invalidate()
+        end
+        
+        function self.txtRed:doValueChange()
+          local group  = self.groupParent
+          
+          if self.value > 255 then
+            self.value = 0
+          end
+          if self.value < 0 then
+            self.value = 255
+          end
+          group.newColor[1]  = self.value
+          group.csRed.value  = self.value
+          group.txtHex.value = mathTools.color2Hex(group.newColor)
+  
+          gtk.RootScreen:invalidate()
+        end
+        
+        function self.txtGreen:doValueChange()
+          local group  = self.groupParent
+          
+          if self.value > 255 then
+            self.value = 0
+          end
+          if self.value < 0 then
+            self.value = 255
+          end
+          group.newColor[2]  = self.value
+          group.csGreen.value  = self.value
+          group.txtHex.value = mathTools.color2Hex(group.newColor)
+  
+          gtk.RootScreen:invalidate()
+        end
+        
+        function self.txtBlue:doValueChange()
+          local group = self.groupParent
+          
+          if self.value > 255 then
+            self.value = 0
+          end
+          if self.value < 0 then
+            self.value = 255
+          end
+          group.newColor[3] = self.value
+          group.csBlue.value = self.value
+          group.txtHex.value = mathTools.color2Hex(group.newColor)
+  
+          gtk.RootScreen:invalidate()
+        end
+        
+        function self.txtHex:onBlur()
+          local group = self.groupParent
+          local text  = self.value
+          local red   = tonumber(string.sub(text, 1, 2) or "0", 16)
+          local green = tonumber(string.sub(text, 3, 4) or "0", 16)
+          local blue  = tonumber(string.sub(text, 5, 6) or "0", 16)
+          
+          group.newColor = {red, green, blue}
+          
+          group.txtRed.value   = red
+          group.csRed.value    = red
+          group.txtGreen.value = green
+          group.csGreen.value  = green
+          group.txtBlue.value  = blue
+          group.csBlue.value   = blue
+          group.lblColor.color = group.newColor
+        end
+  
+        local children = {self.csRed, self.lblRed, self.txtRed, self.csGreen, self.lblGreen, self.txtGreen, self.csBlue, self.lblBlue, self.txtBlue, self.lblColor, self.txtHex, self.lblHex}
+        self.children = children
+        self.parentView = parentView
+  
+        self:addChildrenTo(children, parentView)
+  --      parentView.newColor = newColor
+      end
+      
+      function ColorGroup:getValue() 
+        local children = self.children
+        local r = children[3].value
+        local g = children[6].value
+        local b = children[9].value
+        local h = children[11].value
+        
+        return {r, g, b}, h
+      end
+  
+    end  
+  end
+  
+  ----------------------------------
+  -- Select One Color Dialog View --
+  ----------------------------------
+  do 
+    local Dialog     = gtk.Views.Dialog
+    local Button     = gtk.Widgets.Button
+    local ColorGroup = gtk.WidgetGroups.ColorGroup
+    
+    gtk.Views.ColorDialog = class(Dialog)
+    local ColorDialog = gtk.Views.ColorDialog
+    
+    function ColorDialog:init(title, defaultColor, callback)
+      local defaultColor = defaultColor or {0, 0, 0}
+      
+      local position = Position { 
+        top = "35px", left = "52px" 
+      }
+      
+      local dimension = Dimension(210, 125)
+      
+      Dialog.init(self, title, position, dimension)
+  
+      local pickColor = ColorGroup(Position {top = "30px", left = "49px"}, self, defaultColor)
+      local cmdOK = Button {
+        position = Position {
+          bottom = "3px", left = "35%"
+        },
+        auto = true,
+        text = "OK"
+      }
+      function cmdOK:onAction()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+        if callback then
+          local color, h = pickColor:getValue()
+          callback(color, h)
+        end
+      end
+      
+      local cmdCancel = Button {
+        position = Position {
+          bottom = "3px", left = "5px", alignment = {
+            { ref = cmdOK, side = Position.Sides.Right }
+          }
+        },
+        auto = true,
+        text = "Cancel"
+      }
+      function cmdCancel:onAction()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+      
+      self.defaultFocus = 1
+      self:addChildren(cmdOK, cmdCancel)
+    end
+    
+  end
+  
+  function gtk.showColorDialog(title, defaultColor, callback)
+    local dialog = gtk.Views.ColorDialog(title, defaultColor, callback)
+    gtk.RootScreen:pushScreen(dialog)
+    gtk.RootScreen:invalidate()
+  end
+  
+  ----------------------------------
+  -- Select Two Color Dialog View --
+  ----------------------------------
+  do 
+    local Dialog     = gtk.Views.Dialog
+    local Button     = gtk.Widgets.Button
+    local Label      = gtk.Widgets.Label
+    local ColorGroup = gtk.WidgetGroups.ColorGroup
+    
+    gtk.Views.TwoColorDialog = class(Dialog)
+    local TwoColorDialog = gtk.Views.TwoColorDialog
+    
+    function TwoColorDialog:init(title, defaultColor1, defaultColor2, callback)
+      local defaultColor1 = defaultColor1 or {0, 0, 0}
+      local defaultColor2 = defaultColor2 or {255, 255, 255}
+      
+      local position = Position { 
+        top = "5px", left = "32px" 
+      }
+      
+      local dimension = Dimension(250, 200)
+      
+      Dialog.init(self, title, position, dimension)
+  
+      local lblFirst = Label {
+        position = Position {
+          top = "25px", left = "8px"
+        },
+        text = "#1:",
+        style = {
+          font = {
+            size = 14,
+            style = "b"
+          }
+        }
+      }
+  
+      local lblSecond = Label {
+        position = Position {
+          top = "95px", left = "8px"
+        },
+        text = "#2:",
+        style = {
+          font = {
+            size = 14,
+            style = "b"
+          }
+        }
+      }
+      
+      local pickColor1 = ColorGroup(Position {top = "30px", left = "89px"}, self, defaultColor1)
+      local pickColor2 = ColorGroup(Position {top = "100px", left = "89px"}, self, defaultColor2)
+      
+      local cmdOK = Button {
+        position = Position {
+          bottom = "3px", left = "35%"
+        },
+        auto = true,
+        text = "OK"
+      }
+      function cmdOK:onAction()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+        if callback then
+          local color1, h1 = pickColor1:getValue()
+          local color2, h2 = pickColor2:getValue()
+          callback(color1, h1, color2, h2)
+        end
+      end
+      
+      local cmdCancel = Button {
+        position = Position {
+          bottom = "3px", left = "5px", alignment = {
+            { ref = cmdOK, side = Position.Sides.Right }
+          }
+        },
+        auto = true,
+        text = "Cancel"
+      }
+      function cmdCancel:onAction()
+        gtk.RootScreen:popScreen()
+        gtk.RootScreen:invalidate()
+      end
+      
+      self.defaultFocus = 1
+      self:addChildren(lblFirst, lblSecond, cmdOK, cmdCancel)
+    end
+    
+  end
+  
+  function gtk.showTwoColorDialog(title, defaultColor1, defaultColor2, callback)
+    local dialog = gtk.Views.TwoColorDialog(title, defaultColor1, defaultColor2, callback)
+    gtk.RootScreen:pushScreen(dialog)
+    gtk.RootScreen:invalidate()
+  end
