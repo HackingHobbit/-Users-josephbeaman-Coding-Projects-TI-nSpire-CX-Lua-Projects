@@ -6,3 +6,7 @@ reduce the time needed to load the library for those apps that didn't require al
 
 Each of these projects, including the GTK and others, was typed into the calculator from it's own keyboard without the use of a computer.  The code is reasonably efficient--it had
 to be just to run with the small amount of resources available to the device!  I hope you enjoy the apps as much as I enjoyed creating them.
+
+To see a video demo of some of the projects, click the link below:
+
+https://drive.google.com/file/d/1-C7GyXRliFUJv4t28lPmUZBR6Cu_ul6W/view?usp=sharing
